@@ -527,8 +527,8 @@ while(($SumoController.Request -eq 'Run') -and (WaitUntilFull5Minutes))
         # Append to CSV file..
         $DataSet | Export-Csv -Delimiter ";" -Encoding UTF8 -Append -NoTypeInformation -Path $SumoController.WZCsv
 
-        # .. send Data to ElasticSearch..
-        SendTo-LogStash -JsonString "{`"HB7`":{`"Indoor`":{`"WZ`":{`"RH`":$($DataSet.RelHumWZ),`"Temp`":$($DataSet.TempWZ),`"Sumo`":$($DataSet.SumoState)}}}}" | Out-Null
+        # .. send SumoState to ElasticSearch (all other data logged by ElasticSearch-Logger.ps1)..
+        SendTo-LogStash -JsonString "{`"HB7`":{`"Indoor`":{`"WZ`":{`"Sumo`":$($DataSet.SumoState)}}}}" | Out-Null
 
         #.. update Status HTML for IIS..
         CreateStatusHtml -OutFile $SumoController.StatHTML | Out-Null
