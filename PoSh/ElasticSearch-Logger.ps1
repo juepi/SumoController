@@ -31,6 +31,13 @@ $MQTT.Topic_In_WZ_RH = 'HB7/Indoor/WZ/RH'
 $MQTT.Topic_In_WZ_Vbat = 'HB7/Indoor/WZ/Vbat'
 $MQTT.Topic_In_WZ_Status = 'HB7/Indoor/WZ/Status'
 
+# Hashtable for Logstash JSON output
+$LS = [hashtable] @{}
+$LS.HB7 = [hashtable] @{}
+$LS.HB7.Outdoor = [hashtable] @{}
+$LS.HB7.Indoor = [hashtable] @{}
+$LS.HB7.Indoor.WZ = [hashtable] @{}
+
 
 #region Sensor Corrections
 #Battery Voltage correction divider (/1000 -> sensor reports milliVolts) plus correction
@@ -45,8 +52,8 @@ $MailSubject="ElasticSearch-Logger "
 $MailText="ElasticSearch-Logger reports:`n`n"
 $MailSrv="smtp-server"
 $MailPort="25"
-$MailPass = ConvertTo-SecureString "yourSMTPpassword"-AsPlainText -Force
-$MailCred = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList "yourSMTPusername",$MailPass
+$MailPass = ConvertTo-SecureString "your-smtp-pass"-AsPlainText -Force
+$MailCred = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList "your-smtp-user",$MailPass
 #endregion
 
 
@@ -54,7 +61,7 @@ $MailCred = New-Object -TypeName System.Management.Automation.PSCredential -Argu
 
 try
 {
-    . $($Outdoor.BaseDir + "\Common-functions.ps1")
+    . $($BaseDir + "\Common-functions.ps1")
 }
 catch
 {
@@ -87,26 +94,26 @@ else
 while(WaitUntilFull5Minutes)
 {
     # Verify if Sensor is online (Value published within last 30 minutes)
-    # eventuell umbauen mit try/catch für Status Auslesen
     try { [string]$SensOutStat = (Get-MqttTopic -Topic $MQTT.Topic_Out_Status) } catch { write-log -message ("Get-MqttTopic failed to fetch " + $MQTT.Topic_Out_Status + "; Exception: " + ($_.Exception.Message.ToString() -replace "`t|`n|`r"," ")) ; continue }
     try { [string]$SensWZStat = (Get-MqttTopic -Topic $MQTT.Topic_In_WZ_Status) } catch { write-log -message ("Get-MqttTopic failed to fetch " + $MQTT.Topic_In_WZ_Status + "; Exception: " + ($_.Exception.Message.ToString() -replace "`t|`n|`r"," ")) ; continue }
     if (($SensOutStat -match 'online') -and ($SensWZStat -match 'online'))
     {
         if (!$BackgroundMode) {Write-Host "Fetching Data from MQTT broker.." -ForegroundColor Green}
         # OUTDOOR Sensor
-        try { [single]$TempOut = (Get-MqttTopic -Topic $MQTT.Topic_Out_Temp) } catch { write-log -message ("Get-MqttTopic failed to fetch " + $MQTT.Topic_Out_Temp + "; Exception: " + ($_.Exception.Message.ToString() -replace "`t|`n|`r"," ")) }
-        try { [Single]$VbatOut = (Get-MqttTopic -Topic $MQTT.Topic_Out_Vbat) / $VbatCorrDiv } catch { write-log -message ("Get-MqttTopic failed to fetch " + $MQTT.Topic_Out_Vbat + "; Exception: " + ($_.Exception.Message.ToString() -replace "`t|`n|`r"," ")) }
-        try { [Single]$RhOut = (Get-MqttTopic -Topic $MQTT.Topic_Out_RH) } catch { write-log -message ("Get-MqttTopic failed to fetch " + $MQTT.Topic_Out_RH + "; Exception: " + ($_.Exception.Message.ToString() -replace "`t|`n|`r"," ")) }
+        try { [single]$LS.HB7.Outdoor.Temp = (Get-MqttTopic -Topic $MQTT.Topic_Out_Temp) } catch { write-log -message ("Get-MqttTopic failed to fetch " + $MQTT.Topic_Out_Temp + "; Exception: " + ($_.Exception.Message.ToString() -replace "`t|`n|`r"," ")) }
+        try { [Single]$LS.HB7.Outdoor.Vbat = [math]::round(((Get-MqttTopic -Topic $MQTT.Topic_Out_Vbat) / $VbatCorrDiv),2) } catch { write-log -message ("Get-MqttTopic failed to fetch " + $MQTT.Topic_Out_Vbat + "; Exception: " + ($_.Exception.Message.ToString() -replace "`t|`n|`r"," ")) }
+        try { [Single]$LS.HB7.Outdoor.RH = (Get-MqttTopic -Topic $MQTT.Topic_Out_RH) } catch { write-log -message ("Get-MqttTopic failed to fetch " + $MQTT.Topic_Out_RH + "; Exception: " + ($_.Exception.Message.ToString() -replace "`t|`n|`r"," ")) }
         # AirPressure needs to be converted from Pa -> mBar (/100)
-        try { [Single]$ApOut = ([single](Get-MqttTopic -Topic $MQTT.Topic_Out_AP) * 0.01) } catch { write-log -message ("Get-MqttTopic failed to fetch " + $MQTT.Topic_Out_AP + "; Exception: " + ($_.Exception.Message.ToString() -replace "`t|`n|`r"," ")) }
+        try { [Single]$LS.HB7.Outdoor.AirPress = ([single](Get-MqttTopic -Topic $MQTT.Topic_Out_AP) * 0.01) } catch { write-log -message ("Get-MqttTopic failed to fetch " + $MQTT.Topic_Out_AP + "; Exception: " + ($_.Exception.Message.ToString() -replace "`t|`n|`r"," ")) }
 
         # INDOOR-WZ Sensor
-        try { [single]$TempInWZ = (Get-MqttTopic -Topic $MQTT.Topic_In_WZ_Temp) } catch { write-log -message ("Get-MqttTopic failed to fetch " + $MQTT.Topic_In_WZ_Temp + "; Exception: " + ($_.Exception.Message.ToString() -replace "`t|`n|`r"," ")) }
-        try { [Single]$VbatInWZ = (Get-MqttTopic -Topic $MQTT.Topic_In_WZ_Vbat) / $VbatCorrDiv } catch { write-log -message ("Get-MqttTopic failed to fetch " + $MQTT.Topic_In_WZ_Vbat + "; Exception: " + ($_.Exception.Message.ToString() -replace "`t|`n|`r"," ")) }
-        try { [Single]$RhInWZ = (Get-MqttTopic -Topic $MQTT.Topic_In_WZ_RH) } catch { write-log -message ("Get-MqttTopic failed to fetch " + $MQTT.Topic_In_WZ_RH + "; Exception: " + ($_.Exception.Message.ToString() -replace "`t|`n|`r"," ")) }
+        try { [single]$LS.HB7.Indoor.WZ.Temp = (Get-MqttTopic -Topic $MQTT.Topic_In_WZ_Temp) } catch { write-log -message ("Get-MqttTopic failed to fetch " + $MQTT.Topic_In_WZ_Temp + "; Exception: " + ($_.Exception.Message.ToString() -replace "`t|`n|`r"," ")) }
+        try { [Single]$LS.HB7.Indoor.WZ.Vbat = [math]::round(((Get-MqttTopic -Topic $MQTT.Topic_In_WZ_Vbat) / $VbatCorrDiv),2) } catch { write-log -message ("Get-MqttTopic failed to fetch " + $MQTT.Topic_In_WZ_Vbat + "; Exception: " + ($_.Exception.Message.ToString() -replace "`t|`n|`r"," ")) }
+        try { [Single]$LS.HB7.Indoor.WZ.RH = (Get-MqttTopic -Topic $MQTT.Topic_In_WZ_RH) } catch { write-log -message ("Get-MqttTopic failed to fetch " + $MQTT.Topic_In_WZ_RH + "; Exception: " + ($_.Exception.Message.ToString() -replace "`t|`n|`r"," ")) }
 
         # Send Data to ElasticSearch..
-        SendTo-LogStash -JsonString "{`"HB7`":{`"Outdoor`":{`"RH`":$($RhOut),`"Temp`":$($TempOut),`"AirPress`":$($ApOut),`"Vbat`":$($VbatOut)}}{`"Indoor`":{`"WZ`":{`"RH`":$($RhInWZ),`"Temp`":$($TempInWZ),`"Vbat`":$($VbatInWZ)}}}}" | Out-Null
+        SendTo-LogStash -JsonString "$($LS | ConvertTo-Json -Compress -Depth 3)" | Out-Null
+        if (! $BackgroundMode) { Write-Host "$($LS | ConvertTo-Json -Compress -Depth 3)" }
     }
     else
     {
