@@ -11,7 +11,7 @@ The powershell code provides the following functionality:
 * control oven through configurable thresholds, considering day/night, Weekdays, Weekends and holidays
 * save Sensor values / oven session and overall "on-hours" to local CSV file
 * create PNG chart files visualizing the last 2 days (Room temperature and rel. humidity along with oven on/off state)
-* sends data to LogStash (ElasticSearch) via TCP session for long-term data acquisition and visualization (Kibana)
+* sends oven status to MQTT broker
 * send emails on oven status change and errors
 
 You might wander why the "startup.ps1" exists and synchronized collections are used. I've intentionally tried to add a webinterface to the controller script which could also update the parameters during runtime, but actually this is not required and might be removed in the future. A functions remains to generate a static HTML file with the current stats and write it somewhere along with the visualization PNG graph and display it through a ordinary webserver (IIS in my case).

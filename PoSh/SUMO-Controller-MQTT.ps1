@@ -56,8 +56,9 @@ $MQTT.ClientID = 'SumoController'
 $MQTT.Topic_Test = 'HB7/SumoController/Test'
 $MQTT.Topic_WZ_Temp = 'HB7/Indoor/WZ/Temp'
 $MQTT.Topic_WZ_RH = 'HB7/Indoor/WZ/RH'
-$MQTT.Topic_WZ_Vbat = 'HB7/Indoor/WZ/Vbat'
+$MQTT.Topic_WZ_Sumo = 'HB7/Indoor/WZ/Sumo'
 $MQTT.Topic_WZ_Status = 'HB7/Indoor/WZ/Status'
+$MQTT.StatusSensorDead = 'SensorDead'
 
 
 #region Files
@@ -74,25 +75,19 @@ $SensorRange | Add-Member -MemberType NoteProperty -Name WZTempMin -Value '10'
 $SensorRange | Add-Member -MemberType NoteProperty -Name WZTempMax -Value '40'
 $SensorRange | Add-Member -MemberType NoteProperty -Name WZRelHumMin -Value '0'
 $SensorRange | Add-Member -MemberType NoteProperty -Name WZRelHumMax -Value '100'
-$SensorRange | Add-Member -MemberType NoteProperty -Name WZSensVbatMin -Value ([Single]'2.5')
-$SensorRange | Add-Member -MemberType NoteProperty -Name WZSensVbatMax -Value ([Single]'3.5')
 #endregion
 
-#region Sensor Corrections
-#Battery Voltage correction divider (/1000 -> sensor reports milliVolts) plus correction
-[int]$VbatCorrDiv = 1051
-#endregion
 
 #region Mail Alerting
 # Mail alerting
-$MailSource="editme"
-$MailDest="editme"
+$MailSource="***"
+$MailDest="***"
 $MailSubject="Sumo-Controller "
-$MailText="SUMO Controller reports:`n`n"
-$MailSrv="smtp-server"
+$MailText="SUMO Controller meldet:`n`n"
+$MailSrv="***"
 $MailPort="25"
-$MailPass = ConvertTo-SecureString "yourSMTPpassword"-AsPlainText -Force
-$MailCred = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList "yourSMTPusername",$MailPass
+$MailPass = ConvertTo-SecureString "MailPasswordHere"-AsPlainText -Force
+$MailCred = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList "MailUsernameHere",$MailPass
 #endregion
 
 
@@ -105,16 +100,16 @@ $GTFormat = "%d.%m.%Y %H:%M"
 # Helpers
 $LastWZTempValOK = Get-Date
 $LastWZRelHumValOK = Get-Date
-$LastWZSensVbatOK = Get-Date
 [Single]$WZTempLastPlausible = "22.0"
 [Single]$WZRelHumLastPlausible = "50.0"
-[Single]$WZSensVbatLastPlausible = "3.0"
 $SumoSessionStart = Get-Date
 # Ignore Change Requests for SUMO for 2 times to avoid SUMO turning on or off with wrong temp reading or room venting
 # Use script scope as variable will be modified in a function
 Set-Variable -Name SumoStateChangeRequested -Scope Script
 [int]$script:SumoStateChangeRequested = 0
 [int]$IgnoreSumoStateChangeRequests = 2
+# Set to true if LWT has been triggered for the first time
+[Bool]$TempWZLWT = $false
 # Load Holidays from ICS Calendar
 $Holidays = gc $HolidaysICS | ? { $_ -match "DTSTART"}
 $HolidayDateUFormat = "%Y%m%d"
@@ -124,7 +119,6 @@ $DataSet = New-Object PSObject
 $DataSet | Add-Member -MemberType NoteProperty -Name Datum  -Value ''
 $DataSet | Add-Member -MemberType NoteProperty -Name TempWZ -Value ([single]'0.0')
 $DataSet | Add-Member -MemberType NoteProperty -Name RelHumWZ -Value ([int]'0')
-$DataSet | Add-Member -MemberType NoteProperty -Name WZSensVbat -Value ([Single]'0')
 $DataSet | Add-Member -MemberType NoteProperty -Name SumoState -Value ([int]'0')
 $DataSet | Add-Member -MemberType NoteProperty -Name SumoSessionHours -Value ([Single]'0')
 $DataSet | Add-Member -MemberType NoteProperty -Name SumoOverallHours -Value ([Single]'0')
@@ -290,6 +284,12 @@ function Control-Sumo([Single]$Temp)
             }
             else
             {
+                # Verify that SUMO has run longer than minimum runtime
+                if ($DataSet.SumoSessionHours -lt $SumoController.MinRuntime)
+                {
+                    # Session shorter than MinRuntime, do not turn off yet
+                    return 1
+                }
                 if ((Set-SumoState -State 0) -eq $true)
                 {
                     $script:SumoStateChangeRequested = 0
@@ -377,11 +377,12 @@ $SumoController.SumoState = Get-SumoState
 while(($SumoController.Request -eq 'Run') -and (WaitUntilFull5Minutes))
 {
     # Verify if Sensor is online (Value published within last 30 minutes)
-    if ((Get-MqttTopic -Topic $MQTT.Topic_WZ_Status) -match 'online')
+    # CAUTION: this requires ElasticSearch-Logger script to be running or to update Sensor Status topic if a faul occurs!
+    if ((Get-MqttTopic -Topic $MQTT.Topic_WZ_Status) -notmatch $MQTT.StatusSensorDead)
     {
+        # Sensor online
         $DataSet.Datum = Get-Date -UFormat $GTFormat
         try { [single]$WZTempC = (Get-MqttTopic -Topic $MQTT.Topic_WZ_Temp) } catch { [single]$WZTempC = 255; write-log -message ("Get-MqttTopic failed to fetch " + $MQTT.Topic_WZ_Temp + "; Exception: " + ($_.Exception.Message.ToString() -replace "`t|`n|`r"," ")) }
-        try { [Single]$WZSensVbat = (Get-MqttTopic -Topic $MQTT.Topic_WZ_Vbat) / $VbatCorrDiv } catch { [single]$WZSensVbat = 255; write-log -message ("Get-MqttTopic failed to fetch " + $MQTT.Topic_WZ_Vbat + "; Exception: " + ($_.Exception.Message.ToString() -replace "`t|`n|`r"," ")) }
         try { [Single]$WZRelHum = (Get-MqttTopic -Topic $MQTT.Topic_WZ_RH) } catch { [single]$WZRelHum = 255; write-log -message ("Get-MqttTopic failed to fetch " + $MQTT.Topic_WZ_RH + "; Exception: " + ($_.Exception.Message.ToString() -replace "`t|`n|`r"," ")) }
 
         # Verify Sensor Values
@@ -441,28 +442,6 @@ while(($SumoController.Request -eq 'Run') -and (WaitUntilFull5Minutes))
             }
         }        
 
-        if (VerifySensorVal -Val $WZSensVbat -Min $SensorRange.WZSensVbatMin -Max $SensorRange.WZSensVbatMax)
-        {
-            $DataSet.WZSensVbat = [Single]("{0:N2}" -f $WZSensVbat)
-            $WZSensVbatLastPlausible = $DataSet.WZSensVbat
-            $LastWZSensVbatOK = Get-Date
-        }
-        else
-        {
-            # Reported Value is implausible, use old value if not outdated
-            if ($LastWZSensVbatOK.AddMinutes($SensMaxAge) -gt (get-date))
-            {
-                # Sensor within grace period
-                write-log -message "Main: Could not fetch valid Sensor data from MQTT Broker (Topic $($MQTT.Topic_WZ_Vbat)). Reported Value was: $($WZSensVbat)"
-                $DataSet.WZSensVbat = $WZSensVbatLastPlausible
-            }
-            else
-            {
-                # Report Sensor value per mail
-                Send-Email -Type WARNING -Message ("Temp-WZ Batteriespannung seit $($SensMaxAge) ausserhalb der Grenzwerte: " + $WZSensVbat + " Volt`n") -Priority high | Out-Null
-                write-log -message "Main: VerifySensorValues: Could not fetch valid Sensor data from MQTT Broker (Topic $($MQTT.Topic_WZ_Vbat)) within $($SensMaxAge) minutes. This is non fatal."
-            }
-        }
 
         #################################################
         # Sensors have been verified, set SUMO actions
@@ -512,11 +491,11 @@ while(($SumoController.Request -eq 'Run') -and (WaitUntilFull5Minutes))
                 if ( (Get-SumoState) -eq 2)
                 {
                     Send-Email -Type ERROR -Message ("Control-Sumo setzt Sumo Status 2, sumo-pj.mik nicht erreichbar, Programmausführung wird beendet!") -Priority high | Out-Null
-                    write-log -message "Main: Control-Sumo reports status 2, sumo-pj.mik not reachable! Programm will exit!"
+                    write-log -message "Main: Control-Sumo reports status 2, sumo-pj.mik not reachable! Program will exit!"
                     $SumoController.State = "Killed"
                     # Update HTML before killing program
                     CreateStatusHtml -OutFile $SumoController.StatHTML | Out-Null
-                    write-error "Main: Control-Sumo reports status 2, sumo-pj.mik not reachable! Programm will exit!" -ErrorAction Stop
+                    write-error "Main: Control-Sumo reports status 2, sumo-pj.mik not reachable! Program will exit!" -ErrorAction Stop
                 }
 
             }
@@ -527,13 +506,13 @@ while(($SumoController.Request -eq 'Run') -and (WaitUntilFull5Minutes))
         # Append to CSV file..
         $DataSet | Export-Csv -Delimiter ";" -Encoding UTF8 -Append -NoTypeInformation -Path $SumoController.WZCsv
 
-        # .. send SumoState to ElasticSearch (all other data logged by ElasticSearch-Logger.ps1)..
-        SendTo-LogStash -JsonString "{`"HB7`":{`"Indoor`":{`"WZ`":{`"Sumo`":$($DataSet.SumoState)}}}}" | Out-Null
+        # .. set SUMO status in MQTT topic..
+        Set-MqttTopic -Topic $MQTT.Topic_WZ_Sumo -Value $DataSet.SumoState -Retain | Out-Null
 
         #.. update Status HTML for IIS..
         CreateStatusHtml -OutFile $SumoController.StatHTML | Out-Null
 
-        # .. and enqueue Data for Charts..
+        # .. enqueue Data for Charts..
         if ($DatumQ.Count -ge $QueueSize) { $DatumQ.Dequeue() | Out-Null }
         $DatumQ.Enqueue($DataSet.Datum)
         if ($TempWZQ.Count -ge $QueueSize) { $TempWZQ.Dequeue() | Out-Null }
@@ -551,19 +530,19 @@ while(($SumoController.Request -eq 'Run') -and (WaitUntilFull5Minutes))
     }
     else
     {
-        # Sensor outdated, stop SUMO and quit
+        # Sensor dead, stop SUMO and quit
         if ((Set-SumoState -State 0) -eq $false)
         {
             # Error, retry
-            write-output ((get-date).ToString() + ":: Main: Sensor Data outdated! Set-SumoState 0 failed, retrying..") | Out-File -append -filepath $SumoController.PSLog
+            write-output ((get-date).ToString() + ":: Main: Sensor status dead! Set-SumoState 0 failed, retrying..") | Out-File -append -filepath $SumoController.PSLog
             Start-Sleep -Seconds 5
             Set-SumoState -State 0 | Out-Null
         }
-        Send-Email -Type ERROR -Message ("Temp-WZ nicht erreichbar, Sensordaten ungültig!`nSumo wurde gestoppt, Get-SumoState meldet: " + (Get-SumoState) + "`nDie Programmausführung wurde beendet!") -AttachChart yes -Priority high | Out-Null
-        write-log -message "Main: LWT on MQTT broker triggered for $($MQTT.Topic_WZ_Status)! Sensor Data outdated, SUMO stopped! Get-SumoState=$(Get-SumoState)"
+        Send-Email -Type ERROR -Message ("Temp-WZ Sensor nicht erreichbar, Sensordaten ungültig!`nSumo wurde gestoppt, Get-SumoState meldet: " + (Get-SumoState) + "`nDie Programmausführung wurde beendet!") -AttachChart yes -Priority high | Out-Null
+        write-log -message "Main: Temp-WZ Sensor Status dead, SUMO stopped! Get-SumoState=$(Get-SumoState)"
         $SumoController.State = "Killed"
         # Update HTML before killing program
         CreateStatusHtml -OutFile $SumoController.StatHTML | Out-Null
-        Write-Error "Main: LWT on MQTT broker triggered for $($MQTT.Topic_WZ_Status)! Sensor Data outdated, SUMO stopped!" -ErrorAction Stop
+        Write-Error "Main: Temp-WZ Sensor Status dead, SUMO stopped!" -ErrorAction Stop
     }
 }

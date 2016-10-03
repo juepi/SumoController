@@ -215,35 +215,6 @@ function WaitUntilFull5Minutes ()
 }
 
 
-Function SendTo-LogStash ([string]$JsonString)
-{ 
-    if ($JsonString)
-    {
-        try
-        {
-            # Connect to local LogStash Service on TCP Port 5544 and send JSON string
-            $Socket = New-Object System.Net.Sockets.TCPClient(127.0.0.1,5544)
-            $Stream = $Socket.GetStream()
-            $Writer = New-Object System.IO.StreamWriter($Stream)
-            $Writer.WriteLine($JsonString)
-            $Writer.Flush()
-            $Stream.Close()
-            $Socket.Close()
-        }
-        catch
-        {
-            return $false
-        }
-    }
-    else
-    {
-        # No String parameter given
-        return $false
-    }
-    return $true
-}
-
-
 function CreateStatusHtml ([string] $OutFile)
 {
     if (! $OutFile)
