@@ -21,5 +21,12 @@ SUMO-Controller-MQTT.ps1 can also be started directly, which will lead to a "for
 
 Note that some text (mail text, visualization stuff) is in german.
 
+Software Requirements:
+* Mosquitto MQTT Software (https://mosquitto.org/)
+* Mosquitto installation path Environment variable set (MOSQUITTO_DIR)
+* an MQTT broker (internet or local, authentication not implemented)
+* ElasticSearch-Logger up and running (to verify indoor temperature-sensor functionality)
+
+
 Have fun,
 Juergen
