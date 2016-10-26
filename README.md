@@ -26,7 +26,7 @@ Software Requirements:
 * Mosquitto installation path Environment variable set (MOSQUITTO_DIR)
 * an MQTT broker (internet or local, authentication not implemented)
 * ElasticSearch-Logger up and running (to verify indoor temperature-sensor functionality)
-*NodeJS for the Web Frontend
+* NodeJS for the Web Frontend
 
 Have fun,
 Juergen
