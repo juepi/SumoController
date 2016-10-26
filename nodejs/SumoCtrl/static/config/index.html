@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+
+	<meta charset="UTF-8">
+
+	<title>SUMO Controller Configuration</title>
+
+	<link rel="stylesheet" href="css/style.css">
+
+  <script src='//ajax.googleapis.com/ajax/libs/jquery/1.9.1/jquery.min.js'></script>
+  <script src="js/incrementing.js"></script>
+
+  <script>
+$(function() {
+	$("#submit").click(function() {
+		var jsonData = {}
+		var formData = $("#configform").serializeArray();
+		$.each(formData, function() {
+			if (jsonData[this.name]) {
+				if (!jsonData[this.name].push) {
+				jsonData[this.name] = [jsonData[this.name]];
+				}
+				jsonData[this.name].push(this.value || '');
+			} else {
+				jsonData[this.name] = this.value || '';
+			}
+		});
+		console.log(jsonData);
+		$.post("/setconfig", jsonData)
+		document.body.innerHTML += "<div id=\x22page-wrap\x22><h1>Configuration saved!</h1></div>";
+		return false;
+	})
+
+	$.getJSON("/getconfig", function(data) {
+		for(k in data) {
+			$("#" + k).val(data[k])
+			console.log(data[k])
+		}
+	})
+
+})
+  </script>
+</head>
+
+<body>
+
+	<div id="page-wrap">
+
+		<h1>SUMO Controller Configuration</h1>
+
+     <form id="configform" method="post" action="">
+      <div class="float-row">
+        <label for="name">Min Day Temperature</label>
+        <input type="text" name="MinDayTemp" id="MinDayTemp">
+      </div>
+      <div class="float-row">
+        <label for="name">Max Day Temperature</label>
+        <input type="text" name="MaxDayTemp" id="MaxDayTemp">
+      </div>
+      <div class="float-row">
+        <label for="name">Min Night Temperature</label>
+        <input type="text" name="MinNightTemp" id="MinNightTemp">
+      </div>
+      <div class="float-row">
+        <label for="name">Max Night Temperature</label>
+        <input type="text" name="MaxNightTemp" id="MaxNightTemp">
+      </div>
+     <form method="post" action="">
+      <div class="int-row">
+        <label for="name">Weekend Day Start Hour</label>
+        <input type="text" name="WeekendDayStartHour" id="WeekendDayStartHour">
+      </div>
+      <div class="int-row">
+        <label for="name">Weekend Day End Hour</label>
+        <input type="text" name="WeekendDayEndHour" id="WeekendDayEndHour">
+      </div>
+      <div class="int-row">
+        <label for="name">Workday Day Start Hour</label>
+        <input type="text" name="DayStartHour" id="DayStartHour">
+      </div>
+      <div class="int-row">
+        <label for="name">Workday Day End Hour</label>
+        <input type="text" name="DayEndHour" id="DayEndHour">
+      </div>
+	  <br>
+	  <br>
+	  <label-checkbox for="name">Force Workday</label-checkbox>
+	  <input type="checkbox" name="ForceWorkday" value="true">
+	  <br>
+	  <label-checkbox for="name">Force Weekend</label-checkbox>
+	  <input type="checkbox" name="ForceWeekend" value="true">
+	  
+      <div class="buttons" style="font-size:18px;">
+        <input type="submit" value="Submit" id="submit">
+      </div>
+    </form>
+
+	</div>
+
+</body>
+
+</html>

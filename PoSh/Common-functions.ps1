@@ -179,18 +179,19 @@ function Set-SumoState([int]$State)
 
 function Send-Email ([String]$Type,[String]$Message,[String]$AttachChart='no',[String]$Priority='normal')
 {
-    $MailSubject = ($Mailsubject + $Type)
+    $MailSubject = ($Mail.Subject + $Type)
+    $MailCred = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList $Mail.User,(ConvertTo-SecureString $Mail.Pass -AsPlainText -Force)
     try
     {
         switch ($AttachChart)
         {
             no
             {
-                Send-MailMessage -To $MailDest -From $MailSource -Subject $MailSubject -Body ($MailText + $Message) -Priority $Priority -SmtpServer $MailSrv -Encoding ([System.Text.Encoding]::UTF8) -Credential $MailCred
+                Send-MailMessage -To $Mail.Dest -From $Mail.Source -Subject $MailSubject -Body ($Mail.Text + $Message) -Priority $Priority -SmtpServer $Mail.Srv -Port $Mail.Port -Encoding ([System.Text.Encoding]::UTF8) -Credential $MailCred
             }
             yes
             {
-                Send-MailMessage -To $MailDest -From $MailSource -Subject $MailSubject -Body ($MailText + $Message) -Priority $Priority -Attachments $ChartFile -SmtpServer $MailSrv -Encoding ([System.Text.Encoding]::UTF8) -Credential $MailCred
+                Send-MailMessage -To $Mail.Dest -From $Mail.Source -Subject $MailSubject -Body ($Mail.Text + $Message) -Priority $Priority -Attachments $ChartFile -SmtpServer $Mail.Srv -Port $Mail.Port -Encoding ([System.Text.Encoding]::UTF8) -Credential $MailCred
             }
             default
             {
@@ -211,6 +212,35 @@ function WaitUntilFull5Minutes ()
     # Function will sleep until the next full 5 minutes (00:00,00:05,00:10,...)
     $gt = Get-Date -Second 0
     do {Start-Sleep -Seconds 1} until ((Get-Date) -ge ($gt.addminutes(5-($gt.minute % 5))))
+    return $true
+}
+
+
+Function SendTo-LogStash ([string]$JsonString)
+{ 
+    if ($JsonString)
+    {
+        try
+        {
+            # Connect to local LogStash Service on TCP Port 5544 and send JSON string
+            $Socket = New-Object System.Net.Sockets.TCPClient(127.0.0.1,5544)
+            $Stream = $Socket.GetStream()
+            $Writer = New-Object System.IO.StreamWriter($Stream)
+            $Writer.WriteLine($JsonString)
+            $Writer.Flush()
+            $Stream.Close()
+            $Socket.Close()
+        }
+        catch
+        {
+            return $false
+        }
+    }
+    else
+    {
+        # No String parameter given
+        return $false
+    }
     return $true
 }
 
@@ -252,6 +282,9 @@ function CreateStatusHtml ([string] $OutFile)
         $PSLogData = (Get-Content $SumoController.PSLog -Delimiter "`r`n" -Tail 10 -Encoding UTF8).Replace("`r`n","<br>`r`n")
     }
 
+    # Convert SUMO Settings to HTML
+    $SumoConfig = [PSCustomObject]$SumoSettings | ConvertTo-Html -As List -Fragment
+
     # Prepare HTML
     $IndexTitle = 'Sumo-Controller WebStatus'
     $IndexHeader = "<style>TABLE{border-width: 1px;border-style: solid;border-color: black;border-collapse: collapse;}TH{border-width: 1px;padding: 0px;border-style: solid;border-color: black;}TD{border-width: 1px;padding: 0px;border-style: solid;border-color: black;}</style>"
@@ -262,12 +295,14 @@ function CreateStatusHtml ([string] $OutFile)
     {
         $IndexPreTable += "<a href=`"/IndoorWZChart.png`"><img style=`"border: 2px solid ; width: 640px; height: 360px;`" alt=`"IndoorWZChart`" src=`"/IndoorWZChart.png`" align=`"center`"></a><br>`n"
     }
-    $IndexPreTable += "<br><a href=`"/OutdoorChart.png`">Click here for the Outdoor Sensor chart.</a>`n"
     $IndexPreTable += "<br><h4>Most recent Temp-WZ sensor data:</h4>`n"
-    $IndexPostTable = "<br><br><h4>Most recent Log messages:</h4>`n"
+    $IndexPostTable = "<br><br><h4>Current SUMO Controller config:</h4>`n"
+    $IndexPostTable += $SumoConfig
+    $IndexPostTable += "<br><a href=`"/config/`">Configure SUMO Controller settings</a>"
+    $IndexPostTable += "<br><br><h4>Most recent Log messages:</h4>`n"
     $IndexPostTable += "<span style=`"font-family: Courier New,Courier,monospace;`">"
     $IndexPostTable += $PSLogData
-    $IndexPostTable += "<br><br><small>Output created on: $((Get-Date).ToString())</small></span>"
+    $IndexPostTable += "<br><br><small>Output generated on: $((Get-Date).ToString())</small></span>"
 
     # Create HTML
     try

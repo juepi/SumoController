@@ -1,120 +1,51 @@
-################################# SUMO Controller script ###########################################
+################################# SUMO Controller script ##########################################
 ### Author: jpichlbauer
-####################################################################################################
+###################################################################################################
 # Use invariant Culture to avoid problems with comma seperator
 [System.Threading.Thread]::CurrentThread.CurrentCulture = [Globalization.CultureInfo]::InvariantCulture;
 
-#region Desired Temperature Ranges for SUMO
-#If Shared Object from Startup.ps1 is not available, define settings
-$BackgroundMode = $true
+#region ############ Load configuration and functions #############################################
+# only necessary when run standalone, else config will be loaded by startup.ps1
+
 if ($SumoSettings -eq $null)
 {
-    $SumoSettings = New-Object PSObject
-    $SumoSettings | Add-Member -MemberType NoteProperty -Name DayStartHour -Value '14'
-    $SumoSettings | Add-Member -MemberType NoteProperty -Name DayEndHour -Value '21'
-    $SumoSettings | Add-Member -MemberType NoteProperty -Name WeekendDayStartHour -Value '7'
-    $SumoSettings | Add-Member -MemberType NoteProperty -Name WeekendDayEndHour -Value '22'
-    $SumoSettings | Add-Member -MemberType NoteProperty -Name MinNightTemp -Value ([Single]'19')
-    $SumoSettings | Add-Member -MemberType NoteProperty -Name MaxNightTemp -Value ([Single]'21')
-    $SumoSettings | Add-Member -MemberType NoteProperty -Name MinDayTemp -Value ([Single]'21')
-    $SumoSettings | Add-Member -MemberType NoteProperty -Name MaxDayTemp -Value ([Single]'23')
+    Import-Module $PSScriptRoot\configuration.ps1 -ErrorAction Stop
+    # script called standalone, assume Foreground mode
     $BackgroundMode = $false
 }
-# This hashtable contains all common settings for the Backend
-if ($SumoController -eq $null)
+else
 {
-    $SumoController = [hashtable] @{}
-    $SumoController.State = 'Running'
-    $SumoController.Request = 'Run'
-    $SumoController.SumoState = [int]0
-    $SumoController.BaseDir = $PSScriptRoot
-    $SumoController.PSLog = "$($PSScriptRoot)\logs\SUMO-Controller.log"
-    $SumoController.WZCsv = "$($SumoController.BaseDir)\data\TempWZ-Sumo.csv"
-    $SumoController.WWWroot = "C:\inetpub\wwwroot"
-    $SumoController.StatHTML = "$($SumoController.WWWroot)\index.html"
-    $SumoController.SumoHost = "sumo-pj.mik"
-    $SumoController.SumoURL = ("http://" + $SumoController.SumoHost)
-    $SumoController.SumoON = ($SumoController.SumoURL + "/SUMO=ON")
-    $SumoController.SumoOFF = ($SumoController.SumoURL + "/SUMO=OFF")
-    $SumoController.SumoResponseOn = "SUMO state is now: On"
-    $SumoController.SumoResponseOff = "SUMO state is now: Off"
-    # Timeout Value for Invoke-Webrequest (seconds)
-    $SumoController.WebReqTimeout = [int]'15'
-    # Minimum Runtime for SUMO in Hours
-    $SumoController.MinRuntime = [single]'1.5'
+    # configuration already loaded, assume background mode
+    $BackgroundMode = $true
 }
-#endregion
+
+# Load common and Data Visualization functions
+
+Import-Module $($SumoController.BaseDir + "\Common-functions.ps1") -ErrorAction Stop
+Import-Module $($SumoController.BaseDir + "\Data-Visualization.ps1") -ErrorAction Stop
+#endregion ========================================================================================
 
 
-#region MQTT Settings
-$MQTT = [hashtable] @{}
-$MQTT.MosqSub = "$($env:MOSQUITTO_DIR)\mosquitto_sub.exe"
-$MQTT.MosqPub = "$($env:MOSQUITTO_DIR)\mosquitto_pub.exe"
-$MQTT.Broker = 'dvb-juepi.mik'
-$MQTT.Port = [int]'1883'
-$MQTT.ClientID = 'SumoController'
-$MQTT.Topic_Test = 'HB7/SumoController/Test'
-$MQTT.Topic_WZ_Temp = 'HB7/Indoor/WZ/Temp'
-$MQTT.Topic_WZ_RH = 'HB7/Indoor/WZ/RH'
-$MQTT.Topic_WZ_Sumo = 'HB7/Indoor/WZ/Sumo'
-$MQTT.Topic_WZ_Status = 'HB7/Indoor/WZ/Status'
-$MQTT.StatusSensorDead = 'SensorDead'
-
-
-#region Files
-$TempWZCsv = "$($SumoController.BaseDir)\data\TempWZ-Sumo.csv"
-$HolidaysICS = "$($SumoController.BaseDir)\data\Feiertage-AT.ics"
-$ChartFile = "$($SumoController.WWWroot)\IndoorWZChart.png"
-$ChartImgFmt = 'PNG'
-#endregion
-
-
-#region Valid Sensor Ranges
-$SensorRange = New-Object PSObject
-$SensorRange | Add-Member -MemberType NoteProperty -Name WZTempMin -Value '10'
-$SensorRange | Add-Member -MemberType NoteProperty -Name WZTempMax -Value '40'
-$SensorRange | Add-Member -MemberType NoteProperty -Name WZRelHumMin -Value '0'
-$SensorRange | Add-Member -MemberType NoteProperty -Name WZRelHumMax -Value '100'
-#endregion
-
-
-#region Mail Alerting
-# Mail alerting
-$MailSource="***"
-$MailDest="***"
-$MailSubject="Sumo-Controller "
-$MailText="SUMO Controller meldet:`n`n"
-$MailSrv="***"
-$MailPort="25"
-$MailPass = ConvertTo-SecureString "MailPasswordHere"-AsPlainText -Force
-$MailCred = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList "MailUsernameHere",$MailPass
-#endregion
-
+#region ########### Local Settings and Variables ##################################################
 
 #region Script Variables
-#Maximum Age for Sensor Values in Minutes
-$SensMaxAge = 30
 # Display Format for Datetime: 31.12.2015 23:13
 $GTFormat = "%d.%m.%Y %H:%M"
+# Date Format for matching holidays from ICS
+$HolidayDateUFormat = "%Y%m%d"
 
-# Helpers
+
+# Helper variables
 $LastWZTempValOK = Get-Date
 $LastWZRelHumValOK = Get-Date
 [Single]$WZTempLastPlausible = "22.0"
 [Single]$WZRelHumLastPlausible = "50.0"
 $SumoSessionStart = Get-Date
-# Ignore Change Requests for SUMO for 2 times to avoid SUMO turning on or off with wrong temp reading or room venting
 # Use script scope as variable will be modified in a function
-Set-Variable -Name SumoStateChangeRequested -Scope Script
 [int]$script:SumoStateChangeRequested = 0
-[int]$IgnoreSumoStateChangeRequests = 2
-# Set to true if LWT has been triggered for the first time
-[Bool]$TempWZLWT = $false
-# Load Holidays from ICS Calendar
-$Holidays = gc $HolidaysICS | ? { $_ -match "DTSTART"}
-$HolidayDateUFormat = "%Y%m%d"
 
 
+# Create PSObject for CSV / Chart output
 $DataSet = New-Object PSObject
 $DataSet | Add-Member -MemberType NoteProperty -Name Datum  -Value ''
 $DataSet | Add-Member -MemberType NoteProperty -Name TempWZ -Value ([single]'0.0')
@@ -123,35 +54,26 @@ $DataSet | Add-Member -MemberType NoteProperty -Name SumoState -Value ([int]'0')
 $DataSet | Add-Member -MemberType NoteProperty -Name SumoSessionHours -Value ([Single]'0')
 $DataSet | Add-Member -MemberType NoteProperty -Name SumoOverallHours -Value ([Single]'0')
 #endregion
-
-# Load common Functions and Data Visualization
-
-try
-{
-    . $($SumoController.BaseDir + "\Common-functions.ps1")
-    . $($SumoController.BaseDir + "\Data-Visualization.ps1")
-}
-catch
-{
-    Write-Error "Failed to load required functions!" -ErrorAction Stop
-}
+#endregion ========================================================================================
 
 
-########## Local Functions #############
-#region Function-Definitions
+
+#region ########## Local Functions ################################################################
 
 function Control-Sumo([Single]$Temp)
 {
     # Check if Weekend or Holiday
-    if (((get-date).DayOfWeek -eq "Saturday") -or ((get-date).DayOfWeek -eq "Sunday") -or ($Holidays -match "$(Get-Date -UFormat $($HolidayDateUFormat))"))
+    if ((((get-date).DayOfWeek -match 'Saturday|Sunday') -or ($Holidays -match "$(Get-Date -UFormat $($HolidayDateUFormat))") -or $SumoSettings.ForceWeekend) -and (-not $SumoSettings.ForceWorkday))
     {
         #Weekend or Holiday
+        if (! $BackgroundMode) {Write-Host "Detected Weekend." -ForegroundColor Green}
         [int]$DayStartHour = $SumoSettings.WeekendDayStartHour
         [int]$DayEndHour = $SumoSettings.WeekendDayEndHour
     }
     else
     {
         #not Weekend
+        if (! $BackgroundMode) {Write-Host "Detected Workday." -ForegroundColor Green}
         [int]$DayStartHour = $SumoSettings.DayStartHour
         [int]$DayEndHour = $SumoSettings.DayEndHour
         
@@ -162,7 +84,7 @@ function Control-Sumo([Single]$Temp)
         if ( ($Temp -lt $SumoSettings.MinDayTemp) -and ($SumoController.SumoState -eq "0"))
         {
             # SUMO must be turned ON
-            if ( $script:SumoStateChangeRequested -ne $IgnoreSumoStateChangeRequests )
+            if ( $script:SumoStateChangeRequested -ne $SumoController.IgnoreStateChangeReq )
             {
                 # Ignore State Change request and return current state
                 $script:SumoStateChangeRequested ++
@@ -195,7 +117,7 @@ function Control-Sumo([Single]$Temp)
         elseif ( ($Temp -ge $SumoSettings.MaxDayTemp) -and ($SumoController.SumoState -eq "1"))
         {
             # SUMO must be turned OFF
-            if ( $script:SumoStateChangeRequested -ne $IgnoreSumoStateChangeRequests )
+            if ( $script:SumoStateChangeRequested -ne $SumoController.IgnoreStateChangeReq )
             {
                 # Ignore State Change request and return current state
                 $script:SumoStateChangeRequested ++
@@ -243,7 +165,7 @@ function Control-Sumo([Single]$Temp)
         if ( ($Temp -lt $SumoSettings.MinNightTemp) -and ($SumoController.SumoState -eq "0"))
         {
             # SUMO must be turned ON
-            if ( $script:SumoStateChangeRequested -ne $IgnoreSumoStateChangeRequests )
+            if ( $script:SumoStateChangeRequested -ne $SumoController.IgnoreStateChangeReq )
             {
                 # Ignore State Change request and return current state
                 $script:SumoStateChangeRequested ++
@@ -276,7 +198,7 @@ function Control-Sumo([Single]$Temp)
         elseif ( ($Temp -ge $SumoSettings.MaxNightTemp) -and ($SumoController.SumoState -eq "1"))
         {
             # SUMO must be turned OFF
-            if ( $script:SumoStateChangeRequested -ne $IgnoreSumoStateChangeRequests )
+            if ( $script:SumoStateChangeRequested -ne $SumoController.IgnoreStateChangeReq )
             {
                 # Ignore State Change request and return current state
                 $script:SumoStateChangeRequested ++
@@ -324,9 +246,12 @@ function write-log ([string]$message)
 {
     write-output ((get-date).ToString() + ":: " + $message) | Out-File -append -filepath $SumoController.PSLog
 }
-#endregion
 
-################ Main ####################
+#endregion ========================================================================================
+
+
+
+#region ################ Main #####################################################################
 
 $SumoController.State = 'Running'
 
@@ -339,12 +264,23 @@ else
     write-log -message "SUMO-Controller: script started without Frontend."
 }
 
+# Load Holidays from ICS Calendar
+if (Test-Path $SumoController.HolidaysICS)
+{
+    $Holidays = gc $SumoController.HolidaysICS | ? { $_ -match "DTSTART"}
+}
+else
+{
+    $Holidays = "none"
+    write-log -message "Main: Holiday file not found, no holidays loaded!"
+}
+
 # Get historic data from log (if available)
 if (Test-Path $SumoController.WZCsv)
 {
     if (! $BackgroundMode) {Write-Host "Importing historic data.." -ForegroundColor Green}
 
-    $HistoricData = Import-Csv -Delimiter ";" -Encoding UTF8 -Path $TempWZCsv
+    $HistoricData = Import-Csv -Delimiter ";" -Encoding UTF8 -Path $SumoController.WZCsv
 
     # Fill the queues with historic data
     for ($i=$QueueSize; $i -gt 0; $i--)
@@ -396,7 +332,7 @@ while(($SumoController.Request -eq 'Run') -and (WaitUntilFull5Minutes))
         else
         {
             # Reported Value is implausible, use old value if not outdated
-            if ($LastWZTempValOK.AddMinutes($SensMaxAge) -gt (get-date))
+            if ($LastWZTempValOK.AddMinutes($SumoController.SensMaxAge) -gt (get-date))
             {
                 # Sensor within grace period
                 write-log -message "Main: Could not fetch valid Sensor data from MQTT Broker (Topic $($MQTT.Topic_WZ_Temp)). Reported Value was: $($WZTempC)"
@@ -413,9 +349,9 @@ while(($SumoController.Request -eq 'Run') -and (WaitUntilFull5Minutes))
                     Set-SumoState -State 0 | Out-Null
                 }
                 Send-Email -Type ERROR -Message ("Temp-WZ nicht erreichbar, Temperatur Sensordaten ungültig!`nSumo wurde gestoppt, Get-SumoState meldet: " + (Get-SumoState) + "`nDie Programmausführung wurde beendet!") -AttachChart yes -Priority high | Out-Null
-                write-log -message "Main: VerifySensorValues: Could not fetch valid Sensor data from MQTT Broker (Topic $($MQTT.Topic_WZ_Temp)) within $($SensMaxAge) minutes! Sensor Data outdated, SUMO stopped! Get-SumoState=$(Get-SumoState)"
+                write-log -message "Main: VerifySensorValues: Could not fetch valid Sensor data from MQTT Broker (Topic $($MQTT.Topic_WZ_Temp)) within $($SumoController.SensMaxAge) minutes! Sensor Data outdated, SUMO stopped! Get-SumoState=$(Get-SumoState)"
                 $SumoController.State = "Killed"
-                Write-Error "Could not fetch valid Sensor data from MQTT Broker (Topic $($MQTT.Topic_WZ_Temp)) within $($SensMaxAge) minutes! Sensor Data outdated, SUMO stopped!" -ErrorAction Stop
+                Write-Error "Could not fetch valid Sensor data from MQTT Broker (Topic $($MQTT.Topic_WZ_Temp)) within $($SumoController.SensMaxAge) minutes! Sensor Data outdated, SUMO stopped!" -ErrorAction Stop
             }
         }
 
@@ -428,7 +364,7 @@ while(($SumoController.Request -eq 'Run') -and (WaitUntilFull5Minutes))
         else
         {
             # Reported Value is implausible, use old value if not outdated
-            if ($LastWZRelHumValOK.AddMinutes($SensMaxAge) -gt (get-date))
+            if ($LastWZRelHumValOK.AddMinutes($SumoController.SensMaxAge) -gt (get-date))
             {
                 # Sensor within grace period
                 write-log -message "Main: Could not fetch valid Sensor data from MQTT Broker (Topic $($MQTT.Topic_WZ_RH)). Reported Value was: $($WZRelHum)"
@@ -438,7 +374,7 @@ while(($SumoController.Request -eq 'Run') -and (WaitUntilFull5Minutes))
             {
                 # Sensor outdated
                 # Just log the error, we actually don't care about humidity
-                write-log -message "Main: VerifySensorValues: Could not fetch valid Sensor data from MQTT Broker (Topic $($MQTT.Topic_WZ_RH)) within $($SensMaxAge) minutes. This is non fatal."
+                write-log -message "Main: VerifySensorValues: Could not fetch valid Sensor data from MQTT Broker (Topic $($MQTT.Topic_WZ_RH)) within $($SumoController.SensMaxAge) minutes. This is non fatal."
             }
         }        
 
@@ -526,7 +462,7 @@ while(($SumoController.Request -eq 'Run') -and (WaitUntilFull5Minutes))
         $chart.Series["Temperatur"].Points.DataBindXY($DatumQ, $TempWZQ)
         $chart.Series["SUMO Status"].Points.DataBindXY($DatumQ, $SumoStateQ)
         $chart.Series["RH"].Points.DataBindXY($DatumQ, $RhWZQ)
-        $Chart.SaveImage($ChartFile, $ChartImgFmt)
+        $Chart.SaveImage($SumoController.ChartFile, $SumoController.ChartFormat)
     }
     else
     {
@@ -546,3 +482,4 @@ while(($SumoController.Request -eq 'Run') -and (WaitUntilFull5Minutes))
         Write-Error "Main: Temp-WZ Sensor Status dead, SUMO stopped!" -ErrorAction Stop
     }
 }
+#endregion ========================================================================================

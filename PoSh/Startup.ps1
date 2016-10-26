@@ -4,47 +4,52 @@
 # Use invariant Culture to avoid problems with comma seperator
 [System.Threading.Thread]::CurrentThread.CurrentCulture = [Globalization.CultureInfo]::InvariantCulture;
 
+# Load configuration
+Import-Module $PSScriptRoot\configuration.ps1 -ErrorAction Stop
 
-#region Shared Variables
-# These settings can be changed by the Frontend and will be used instantly by the Backend (SUMO-Controller.ps1)
-#SUMO Controller Settings
-$SumoSettings = [HashTable]::Synchronized(@{})
-$SumoSettings.DayStartHour = [Int]'14'
-$SumoSettings.DayEndHour = [Int]'21'
-$SumoSettings.WeekendDayStartHour = [Int]'7'
-$SumoSettings.WeekendDayEndHour = [Int]'22'
-$SumoSettings.MinNightTemp = [Single]'19'
-$SumoSettings.MaxNightTemp = [Single]'21'
-$SumoSettings.MinDayTemp = [Single]'21'
-$SumoSettings.MaxDayTemp = [Single]'23'
+# Check for Web Frontend
+if (Test-Path $WebCfg.CfgINI)
+{
+    #INI file available, assume Webinterface is working
+    $Script:WebCfgModified = (Get-Item $WebCfg.CfgINI).LastWriteTime
+}
+else
+{
+    # Webinterface not available
+    $WebCfg.Available = $false
+}
 
-# This hashtable contains all common settings for the Backend
-$SumoController = [HashTable]::Synchronized(@{})
-$SumoController.State = 'Stopped'
-$SumoController.Request = 'Run'
-$SumoController.SumoState = [int]'0'
-$SumoController.BaseDir = $PSScriptRoot
-$SumoController.PSLog = "$($PSScriptRoot)\logs\SUMO-Controller.log"
-$SumoController.WZCsv = "$($SumoController.BaseDir)\data\TempWZ-Sumo.csv"
-$SumoController.WWWroot = "C:\inetpub\wwwroot"
-$SumoController.StatHTML = "$($SumoController.WWWroot)\index.html"
-$SumoController.SumoHost = "sumo-pj.mik"
-$SumoController.SumoURL = ("http://" + $SumoController.SumoHost)
-$SumoController.SumoON = ($SumoController.SumoURL + "/SUMO=ON")
-$SumoController.SumoOFF = ($SumoController.SumoURL + "/SUMO=OFF")
-$SumoController.SumoResponseOn = "SUMO state is now: On"
-$SumoController.SumoResponseOff = "SUMO state is now: Off"
-# Timeout Value for Invoke-Webrequest calls (seconds)
-$SumoController.WebReqTimeout = [int]'15'
-# Minimum Runtime for SUMO in Hours
-$SumoController.MinRuntime = [single]'1.5'
-#endregion
+#region ########### Local Functions ###############################################################
+function VerifyTempVal([Single]$Val,[Single]$Min,[Single]$Max)
+{
+    # Verify if Sensor Value is between min and max
+    if ( ($Val -ge $Min) -and ($Val -le $Max) )
+    {
+        return $true
+    }
+    else
+    {
+        return $false
+    }
+}
+
+function write-log ([string]$message)
+{
+    write-output ((get-date).ToString() + ":: Startup.ps1:: " + $message) | Out-File -append -filepath $SumoController.PSLog
+}
+#endregion ========================================================================================
 
 
+#region ############# Main ########################################################################
+
+# Setup SUMO Controller Task
 $Runspace = [Runspacefactory]::CreateRunspace()
 $Runspace.Open()
 $Runspace.SessionStateProxy.SetVariable('SumoSettings',$SumoSettings)
 $Runspace.SessionStateProxy.SetVariable('SumoController',$SumoController)
+$Runspace.SessionStateProxy.SetVariable('Mail',$Mail)
+$Runspace.SessionStateProxy.SetVariable('MQTT',$MQTT)
+$Runspace.SessionStateProxy.SetVariable('SensorRange',$SensorRange)
 
 $SumoControllerTask = [PowerShell]::Create()
 $SumoControllerTask.Runspace = $Runspace
@@ -56,11 +61,118 @@ $SumoControllerTask.AddScript(
 }) | Out-Null
 
 $Handle = $SumoControllerTask.BeginInvoke()
-write-output ((get-date).ToString() + ":: Startup.ps1: SumoControllerTask has been started.") | Out-File -append -filepath $SumoController.PSLog
+write-log -message "SumoControllerTask has been started."
 
 while ($Handle.IsCompleted -eq $false)
 {
-    Start-Sleep -Seconds 30
+    Start-Sleep -Seconds 23
+    if ($WebCfg.Available)
+    {
+        # Fetch new config if modified date of config.ini is newer
+        if ((Get-Item $WebCfg.CfgINI).LastWriteTime -gt $WebCfgModified)
+        {
+            $Script:WebCfgModified = (Get-Item $WebCfg.CfgINI).LastWriteTime
+            # Get recent configuration
+            try
+            {
+                $WebReqData = Invoke-WebRequest -Uri $WebCfg.GetConfigURI -TimeoutSec $WebCfg.WebReqTimeout | ConvertFrom-Json
+            }
+            catch
+            {
+                write-log -message ("Invoke-Webrequest failed to fetch WebUI config. Exception:" + ($_.Exception.Message.ToString() -replace "`t|`n|`r"," "))
+                return
+            }
+
+            write-log -message "New config data from WebUI fetched."
+            # Verify and import new config settings
+            foreach ($HourVal in $WebCfg.HourValues)
+            {
+                try { $WebReqData.$HourVal = [int]$WebReqData.$HourVal }
+                catch { write-log -message "Warn: $($HourVal) value not convertible to Int: $($WebReqData.$HourVal)" ; continue }
+                if (($WebReqData.$HourVal -ge 0) -and ($WebReqData.$HourVal -le 23))
+                {
+                    #Data valid
+                    $SumoSettings.$HourVal = $WebReqData.$HourVal
+                    write-log -message "New value set for $($HourVal): $($WebReqData.$HourVal)"
+                }
+                else
+                {
+                    # Data invalid
+                    write-log -message "Warn: New value for $($HourVal) not within plausible range: $($WebReqData.$HourVal). Value ignored."
+                    continue
+                }
+            }
+
+            $TempValsOK = $true
+            foreach ($TempVal in $WebCfg.TempValues)
+            {
+                try { $WebReqData.$TempVal = [Single]$WebReqData.$TempVal }
+                catch { write-log -message "Error: $($TempVal) value not convertible to Single: $($WebReqData.$TempVal). Value ignored." ; $TempValsOK = $false ; continue }
+                if (VerifyTempVal -Val $WebReqData.$TempVal -Min $WebCfg.MinTemp -Max $WebCfg.MaxTemp)
+                {
+                    #Data valid, need further validation later
+                    continue
+                }
+                else
+                {
+                    # Data invalid
+                    write-log -message "New value for $($TempVal) not within plausible range: $($WebReqData.$TempVal). Value ignored."
+                    $TempValsOK = $false
+                    continue
+                }
+            }
+            # make sure Min-temps are lower than Max-temps before using new values
+            if ($TempValsOK)
+            {
+                if ($WebReqData.MinDayTemp -lt $WebReqData.MaxDayTemp)
+                {
+                    $SumoSettings.MinDayTemp = $WebReqData.MinDayTemp
+                    $SumoSettings.MaxDayTemp = $WebReqData.MaxDayTemp
+                    write-log -message "New Day Temperature values set: $($WebReqData.MinDayTemp) to $($WebReqData.MaxDayTemp)."
+                }
+                else
+                {
+                    write-log -message "Warn: New MinDayTemp ($($WebReqData.MinDayTemp)) not less than new MaxDayTemp ($($WebReqData.MaxDayTemp)). Ignoring Values."
+                }
+
+                if ($WebReqData.MinNightTemp -lt $WebReqData.MaxNightTemp)
+                {
+                    $SumoSettings.MinNightTemp = $WebReqData.MinNightTemp
+                    $SumoSettings.MaxNightTemp = $WebReqData.MaxNightTemp
+                    write-log -message "New Night Temperature values set: $($WebReqData.MinNightTemp) to $($WebReqData.MaxNightTemp)."
+                }
+                else
+                {
+                    write-log -message "Warn: New MinNightTemp ($($WebReqData.MinNightTemp)) not less than new MaxNightTemp ($($WebReqData.MaxNightTemp)). Ignoring Values."
+                }
+            }
+
+            foreach ($BoolVal in $WebCfg.BoolValues)
+            {
+                # Check if value exists, if not set to false
+                if ($WebReqData.$BoolVal -eq $null)
+                {
+                    $WebReqData | Add-Member -Name $BoolVal -MemberType NoteProperty -Value $false
+                }
+                else
+                {
+                    # convert string to bool
+                    switch ($WebReqData.$BoolVal)
+                    {
+                        true { $WebReqData.$BoolVal = [bool]$true }
+                        false { $WebReqData.$BoolVal = [bool]$false }
+                        default { $WebReqData.$BoolVal = [bool]$false }
+                    }
+                }
+                $SumoSettings.$BoolVal = $WebReqData.$BoolVal
+                write-log -message "Flag $($BoolVal) set to $($WebReqData.$BoolVal)."
+            }
+
+        }
+    }
+
 }
 
-write-output ((get-date).ToString() + ":: Startup.ps1: SumoControllerTask has ended. Program stopped.") | Out-File -append -filepath $SumoController.PSLog
+write-log -message "SumoControllerTask has ended. Program stopped."
+
+#endregion ========================================================================================

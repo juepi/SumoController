@@ -4,57 +4,22 @@
 # Use invariant Culture to avoid problems with comma seperator
 [System.Threading.Thread]::CurrentThread.CurrentCulture = [Globalization.CultureInfo]::InvariantCulture;
 
-#region Mail Alerting
-# Mail alerting
-$MailSource="editme"
-$MailDest="editme"
-$MailSubject="Failsafe-Sumo-Controller "
-$MailText="SUMO Controller reports:`n`n"
-$MailSrv="editme"
-$MailPort="25"
-$MailPass = ConvertTo-SecureString "yourSMTPpassword"-AsPlainText -Force
-$MailCred = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList "yourSMTPuser",$MailPass
-#endregion
-
 if ($SumoController -eq $null)
 {
-    $SumoController = [hashtable] @{}
-    $SumoController.State = 'Failsafe'
-    $SumoController.Request = 'Run'
-    $SumoController.SumoState = [int]0
-    $SumoController.BaseDir = $PSScriptRoot
-    $SumoController.PSLog = "$($PSScriptRoot)\logs\SUMO-Controller.log"
-    $SumoController.WZCsv = "$($SumoController.BaseDir)\data\TempWZ-Sumo.csv"
-    $SumoController.WWWroot = "C:\inetpub\wwwroot"
-    $SumoController.StatHTML = "$($SumoController.WWWroot)\index.html"
-    $SumoController.SumoHost = "sumo-pj.mik"
-    $SumoController.SumoURL = ("http://" + $SumoController.SumoHost)
-    $SumoController.SumoON = ($SumoController.SumoURL + "/SUMO=ON")
-    $SumoController.SumoOFF = ($SumoController.SumoURL + "/SUMO=OFF")
-    $SumoController.SumoResponseOn = "SUMO state is now: On"
-    $SumoController.SumoResponseOff = "SUMO state is now: Off"
-    #Timout Value for Invoke-Webrequest
-    $SumoController.WebReqTimeout = [int]'15'
+    Import-Module $PSScriptRoot\configuration.ps1
 }
 
 # Local Script Variables
 # Hour of Day when to turn SUMO On and Off
 $TimeTable = [hashtable] @{}
-$TimeTable.OnAtHour = @("5","15")
-$TimeTable.OffAtHour = @("8","19")
+$TimeTable.OnAtHour = @("9","15")
+$TimeTable.OffAtHour = @("11","18")
 
 
 ########## Functions #############
 # Load common Functions
 
-try
-{
-    . $($SumoController.BaseDir + "\Common-functions.ps1")
-}
-catch
-{
-    Write-Error "Failed to load required functions from $($SumoController.BaseDir)\Common-functions.ps1 !" -ErrorAction Stop
-}
+Import-Module ($SumoController.BaseDir + "\Common-functions.ps1") -ErrorAction Stop
 
 
 
@@ -136,6 +101,6 @@ while (($SumoController.Request -eq 'Run') -and (WaitUntilFull5Minutes))
             }
         }
     }
-    # Write index.html for IIS
+    # Write index.html for Frontend
     CreateStatusHTML -OutFile $SumoController.StatHTML | Out-Null
 }
