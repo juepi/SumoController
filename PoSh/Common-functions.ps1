@@ -191,7 +191,7 @@ function Send-Email ([String]$Type,[String]$Message,[String]$AttachChart='no',[S
             }
             yes
             {
-                Send-MailMessage -To $Mail.Dest -From $Mail.Source -Subject $MailSubject -Body ($Mail.Text + $Message) -Priority $Priority -Attachments $ChartFile -SmtpServer $Mail.Srv -Port $Mail.Port -Encoding ([System.Text.Encoding]::UTF8) -Credential $MailCred
+                Send-MailMessage -To $Mail.Dest -From $Mail.Source -Subject $MailSubject -Body ($Mail.Text + $Message) -Priority $Priority -Attachments $SumoController.ChartFile -SmtpServer $Mail.Srv -Port $Mail.Port -Encoding ([System.Text.Encoding]::UTF8) -Credential $MailCred
             }
             default
             {
@@ -201,6 +201,7 @@ function Send-Email ([String]$Type,[String]$Message,[String]$AttachChart='no',[S
     }
     catch
     {
+        write-output ((get-date).ToString() + ":: Send-EMail:: Failed to send mail message. Exception: " + ($_.Exception.Message.ToString() -replace "`t|`n|`r"," ")) | Out-File -append -filepath $SumoController.PSLog
         return $false
     }
     return $true
