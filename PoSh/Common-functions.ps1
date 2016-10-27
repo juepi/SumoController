@@ -270,17 +270,17 @@ function CreateStatusHtml ([string] $OutFile)
         2 { $SumoStatus = "<span style=`"color: red;`">FAILURE</span>" }
         default { $SumoStatus = "<span style=`"color: red;`">UNKNOWN</span>" }
     }
-    # get last 30min of Temp-WZ.mik Sensordata
+    # get last 60min of Temp-WZ.mik Sensordata
     if (Test-Path $SumoController.WZCsv)
     {
-        $SensData=(gc $SumoController.WZCsv)[0 .. -6] | ConvertFrom-Csv -Delimiter ";"
+        $SensData=(gc $SumoController.WZCsv)[0 .. -12] | ConvertFrom-Csv -Delimiter ";"
     }
 
     # get latest error Messages from PSLogfile
     $PSLogData = @()
     if (Test-Path $SumoController.PSLog)
     {
-        $PSLogData = (Get-Content $SumoController.PSLog -Delimiter "`r`n" -Tail 10 -Encoding UTF8).Replace("`r`n","<br>`r`n")
+        $PSLogData = (Get-Content $SumoController.PSLog -Delimiter "`r`n" -Tail 14 -Encoding UTF8).Replace("`r`n","<br />`r`n")
     }
 
     # Convert SUMO Settings to HTML
@@ -288,33 +288,33 @@ function CreateStatusHtml ([string] $OutFile)
 
     # Prepare HTML
     $IndexTitle = 'Sumo-Controller WebStatus'
-    $IndexHeader = "<style>TABLE{border-width: 1px;border-style: solid;border-color: black;border-collapse: collapse;}TH{border-width: 1px;padding: 0px;border-style: solid;border-color: black;}TD{border-width: 1px;padding: 0px;border-style: solid;border-color: black;}</style>"
+    $IndexHeader = "<style type=`"text/css`">`nTABLE{border-width: 1px;border-style: solid;border-color: black;border-collapse: collapse;}`nTH{border-width: 1px;padding: 0px;border-style: solid;border-color: black;}`nTD{border-width: 1px;padding: 0px;border-style: solid;border-color: black;}`n</style>"
     $IndexPreTable = "<h2>Sumo Controller Status</h2>`n"
     $IndexPreTable += "<h4>Sumo Controller Backend State: <span style=`"color: $($StatusColor);`">$($SumoController.State)</span></h4>`n"
     $IndexPreTable += "<h4>SUMO Oven Status: $($SumoStatus)</h4>`n"
     if ($SumoController.State -eq 'Running')
     {
-        $IndexPreTable += "<a href=`"/IndoorWZChart.png`"><img style=`"border: 2px solid ; width: 640px; height: 360px;`" alt=`"IndoorWZChart`" src=`"/IndoorWZChart.png`" align=`"center`"></a><br>`n"
+        $IndexPreTable += "<a href=`"/IndoorWZChart.png`"><img style=`"border: 2px solid ; width: 640px; height: 360px;`" alt=`"IndoorWZChart`" src=`"/IndoorWZChart.png`" /></a><br />`n"
     }
-    $IndexPreTable += "<br><h4>Most recent Temp-WZ sensor data:</h4>`n"
-    $IndexPostTable = "<br><br><h4>Current SUMO Controller config:</h4>`n"
+    $IndexPreTable += "<br /><h4>Most recent Temp-WZ sensor data:</h4>`n"
+    $IndexPostTable = "<br /><h4>Current SUMO Controller config:</h4>`n"
     $IndexPostTable += $SumoConfig
-    $IndexPostTable += "<br><a href=`"/config/`">Configure SUMO Controller settings</a>"
-    $IndexPostTable += "<br><br><h4>Most recent Log messages:</h4>`n"
-    $IndexPostTable += "<span style=`"font-family: Courier New,Courier,monospace;`">"
+    $IndexPostTable += "<br /><a href=`"/config/`">Configure SUMO Controller settings</a>"
+    $IndexPostTable += "<br /><br /><h4>Most recent Log messages:</h4>`n"
+    $IndexPostTable += "<p><span style=`"font-family: Courier New,Courier,monospace;`">"
     $IndexPostTable += $PSLogData
-    $IndexPostTable += "<br><br><small>Output generated on: $((Get-Date).ToString())</small></span>"
+    $IndexPostTable += "<br /><br /><small>Output generated on: $((Get-Date).ToString())</small></span></p>"
 
     # Create HTML
     try
     {
         if ($SensData)
         {
-            $SensData | ConvertTo-Html -Head $IndexHeader -Title $IndexTitle -PreContent $IndexPreTable -PostContent $IndexPostTable | Out-File -Force -FilePath $OutFile
+            $SensData | ConvertTo-Html -Head $IndexHeader -Title $IndexTitle -PreContent $IndexPreTable -PostContent $IndexPostTable | Out-File -Encoding utf8 -Force -FilePath $OutFile
         }
         else
         {
-            Write-Output " " | ConvertTo-Html -Head $IndexHeader -Title $IndexTitle -PreContent $IndexPreTable -PostContent $IndexPostTable | Out-File -Force -FilePath $OutFile
+            Write-Output " " | ConvertTo-Html -Head $IndexHeader -Title $IndexTitle -PreContent $IndexPreTable -PostContent $IndexPostTable | Out-File -Encoding utf8 -Force -FilePath $OutFile
         }
     }
     catch
