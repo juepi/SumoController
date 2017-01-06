@@ -63,7 +63,10 @@ $SumoController.SensMaxAge = [int]'30'
 #Ignore SUMO state change requests for X times (i.e. while venting room)
 # Note: Main lop runs every 5 minutes, so state change will be ignored fox X * 5min
 $SumoController.IgnoreStateChangeReq = [int]'2'
-
+#Send Info Mails on oven status change
+$SumoController.SendInfoMail = $false
+# Attach temperature chart to info mails
+$SumoSettings.AttachChart = "no"
 
 #region Mail Settings
 # Mail alerting

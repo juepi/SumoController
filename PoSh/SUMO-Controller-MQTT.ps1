@@ -88,7 +88,7 @@ function Control-Sumo([Single]$Temp)
             {
                 # Ignore State Change request and return current state
                 $script:SumoStateChangeRequested ++
-                return 0
+                return Get-SumoState
             }
             else
             {
@@ -121,7 +121,7 @@ function Control-Sumo([Single]$Temp)
             {
                 # Ignore State Change request and return current state
                 $script:SumoStateChangeRequested ++
-                return 1
+                return Get-SumoState
             }
             else
             {
@@ -169,7 +169,7 @@ function Control-Sumo([Single]$Temp)
             {
                 # Ignore State Change request and return current state
                 $script:SumoStateChangeRequested ++
-                return 0
+                return Get-SumoState
             }
             else
             {
@@ -202,7 +202,7 @@ function Control-Sumo([Single]$Temp)
             {
                 # Ignore State Change request and return current state
                 $script:SumoStateChangeRequested ++
-                return 1
+                return Get-SumoState
             }
             else
             {
@@ -310,7 +310,7 @@ $SumoController.SumoState = Get-SumoState
 
 
 # Start Processing
-while(($SumoController.Request -eq 'Run') -and (WaitUntilFull5Minutes))
+while (($SumoController.Request -eq 'Run') -and (WaitUntilFull5Minutes))
 {
     # Verify if Sensor is online (Value published within last 30 minutes)
     # CAUTION: this requires ElasticSearch-Logger script to be running or to update Sensor Status topic if a faul occurs!
@@ -392,7 +392,7 @@ while(($SumoController.Request -eq 'Run') -and (WaitUntilFull5Minutes))
             # Sumo was turned on, start new session
             $SumoSessionStart = Get-Date
             $DataSet.SumoSessionHours = 0
-            Send-Email -Type INFO -Message ("Sumo gestartet.") -AttachChart yes | Out-Null
+            if ($SumoController.SendInfoMail) { Send-Email -Type INFO -Message ("Sumo gestartet.") -AttachChart $SumoSettings.AttachChart | Out-Null }
         }
         elseif ( ($SumoOldState -eq $SumoController.SumoState) -and ($SumoController.SumoState -eq "1") )
         {
@@ -406,7 +406,7 @@ while(($SumoController.Request -eq 'Run') -and (WaitUntilFull5Minutes))
             $DataSet.SumoSessionHours = [Single]("{0:N2}" -f((get-date) - $SumoSessionStart).TotalHours)
             $DataSet.SumoOverallHours = [Single]("{0:N2}" -f($DataSet.SumoOverallHours + $DataSet.SumoSessionHours))
             $DataSet.SumoSessionHours = 0
-            Send-Email -Type INFO -Message ("Sumo gestoppt.") -AttachChart yes | Out-Null
+            if ($SumoController.SendInfoMail) { Send-Email -Type INFO -Message ("Sumo gestartet.") -AttachChart $SumoSettings.AttachChart | Out-Null }
         }
         elseif ( ($SumoOldState -eq "0") -and ($SumoController.SumoState -eq "0") -and ($DataSet.SumoSessionHours -ne 0) )
         {

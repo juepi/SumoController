@@ -12,6 +12,8 @@ if (Test-Path $WebCfg.CfgINI)
 {
     #INI file available, assume Webinterface is working
     $Script:WebCfgModified = (Get-Item $WebCfg.CfgINI).LastWriteTime
+    # Helper Variable to load INI Settings at startup
+    $Script:FirstRun = $true
 }
 else
 {
@@ -69,10 +71,16 @@ while ($Handle.IsCompleted -eq $false)
     if ($WebCfg.Available)
     {
         # Fetch new config if modified date of config.ini is newer
-        if ((Get-Item $WebCfg.CfgINI).LastWriteTime -gt $WebCfgModified)
+        if (((Get-Item $WebCfg.CfgINI).LastWriteTime -gt $WebCfgModified) -or $Script:FirstRun)
         {
             $Script:WebCfgModified = (Get-Item $WebCfg.CfgINI).LastWriteTime
-            # Get recent configuration
+            if ($Script:FirstRun)
+            {
+                $Script:FirstRun = $false
+                write-log -message "Loading SUMO config data from WebUI due to script startup."
+            }
+
+            # Get recent configuration from NodeJS / INI file
             try
             {
                 $WebReqData = Invoke-WebRequest -Uri $WebCfg.GetConfigURI -TimeoutSec $WebCfg.WebReqTimeout | ConvertFrom-Json
@@ -104,13 +112,18 @@ while ($Handle.IsCompleted -eq $false)
             }
 
             $TempValsOK = $true
+            $TempValsChanged = $false
             foreach ($TempVal in $WebCfg.TempValues)
             {
                 try { $WebReqData.$TempVal = [Single]$WebReqData.$TempVal }
                 catch { write-log -message "Error: $($TempVal) value not convertible to Single: $($WebReqData.$TempVal). Value ignored." ; $TempValsOK = $false ; continue }
                 if (VerifyTempVal -Val $WebReqData.$TempVal -Min $WebCfg.MinTemp -Max $WebCfg.MaxTemp)
                 {
-                    #Data valid, need further validation later
+                    #Data valid, check if changed
+                    if ($WebReqData.$TempVal -ne $SumoSettings.$TempVal)
+                    {
+                        $TempValsChanged = $true
+                    }
                     continue
                 }
                 else
@@ -122,7 +135,7 @@ while ($Handle.IsCompleted -eq $false)
                 }
             }
             # make sure Min-temps are lower than Max-temps before using new values
-            if ($TempValsOK)
+            if ($TempValsOK -and $TempValsChanged)
             {
                 if ($WebReqData.MinDayTemp -lt $WebReqData.MaxDayTemp)
                 {
