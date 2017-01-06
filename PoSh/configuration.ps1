@@ -66,7 +66,7 @@ $SumoController.IgnoreStateChangeReq = [int]'2'
 #Send Info Mails on oven status change
 $SumoController.SendInfoMail = $false
 # Attach temperature chart to info mails
-$SumoSettings.AttachChart = "no"
+$SumoController.AttachChart = "no"
 
 #region Mail Settings
 # Mail alerting

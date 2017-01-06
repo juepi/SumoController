@@ -392,7 +392,7 @@ while (($SumoController.Request -eq 'Run') -and (WaitUntilFull5Minutes))
             # Sumo was turned on, start new session
             $SumoSessionStart = Get-Date
             $DataSet.SumoSessionHours = 0
-            if ($SumoController.SendInfoMail) { Send-Email -Type INFO -Message ("Sumo gestartet.") -AttachChart $SumoSettings.AttachChart | Out-Null }
+            if ($SumoController.SendInfoMail) { Send-Email -Type INFO -Message ("Sumo gestartet.") -AttachChart $SumoController.AttachChart | Out-Null }
         }
         elseif ( ($SumoOldState -eq $SumoController.SumoState) -and ($SumoController.SumoState -eq "1") )
         {
@@ -406,7 +406,7 @@ while (($SumoController.Request -eq 'Run') -and (WaitUntilFull5Minutes))
             $DataSet.SumoSessionHours = [Single]("{0:N2}" -f((get-date) - $SumoSessionStart).TotalHours)
             $DataSet.SumoOverallHours = [Single]("{0:N2}" -f($DataSet.SumoOverallHours + $DataSet.SumoSessionHours))
             $DataSet.SumoSessionHours = 0
-            if ($SumoController.SendInfoMail) { Send-Email -Type INFO -Message ("Sumo gestartet.") -AttachChart $SumoSettings.AttachChart | Out-Null }
+            if ($SumoController.SendInfoMail) { Send-Email -Type INFO -Message ("Sumo gestartet.") -AttachChart $SumoController.AttachChart | Out-Null }
         }
         elseif ( ($SumoOldState -eq "0") -and ($SumoController.SumoState -eq "0") -and ($DataSet.SumoSessionHours -ne 0) )
         {
