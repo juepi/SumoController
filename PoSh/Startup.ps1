@@ -100,8 +100,11 @@ while ($Handle.IsCompleted -eq $false)
                 if (($WebReqData.$HourVal -ge 0) -and ($WebReqData.$HourVal -le 23))
                 {
                     #Data valid
-                    $SumoSettings.$HourVal = $WebReqData.$HourVal
-                    write-log -message "New value set for $($HourVal): $($WebReqData.$HourVal)"
+                    if ($WebReqData.$HourVal -ne $SumoSettings.$HourVal)
+                    {
+                        $SumoSettings.$HourVal = $WebReqData.$HourVal
+                        write-log -message "New value set for $($HourVal): $($WebReqData.$HourVal)"
+                    }
                 }
                 else
                 {
@@ -177,8 +180,11 @@ while ($Handle.IsCompleted -eq $false)
                         default { $WebReqData.$BoolVal = [bool]$false }
                     }
                 }
-                $SumoSettings.$BoolVal = $WebReqData.$BoolVal
-                write-log -message "Flag $($BoolVal) set to $($WebReqData.$BoolVal)."
+                if ($SumoSettings.$BoolVal -ne $WebReqData.$BoolVal)
+                {
+                    $SumoSettings.$BoolVal = $WebReqData.$BoolVal
+                    write-log -message "Flag $($BoolVal) set to $($WebReqData.$BoolVal)."
+                }
             }
 
         }
