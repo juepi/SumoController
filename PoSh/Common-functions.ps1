@@ -93,6 +93,15 @@ function Set-MqttTopic ([String]$Topic,[String]$Value,[switch]$Retain)
 
 function Get-SumoState ()
 {
+    # If Simulation Mode is active, return SUMO state from MQTT topic
+    if ($SumoController.Simulate -eq $true)
+    {
+        try { [int]$State = (Get-MqttTopic -Topic $MQTT.Topic_WZ_Sumo) }
+        catch { [int]$State = 0; write-log -message ("SIMULATION: Get-SumoState failed to fetch " + $MQTT.Topic_WZ_Sumo + "; Exception: " + ($_.Exception.Message.ToString() -replace "`t|`n|`r"," ")) }
+        write-log -message "SIMULATION: Get-SumoState reported value: $($State)" 
+        return $State
+    }
+
     #check if SUMO is reachable first.
     $PingSumo = Test-Connection -ComputerName $SumoController.SumoHost -Count 2 -ErrorAction SilentlyContinue
     if ($PingSumo.count -lt 2)
@@ -117,6 +126,15 @@ function Get-SumoState ()
 
 function Set-SumoState([int]$State)
 {
+    #If Simulation Mode is active, return success
+    if ($SumoController.Simulate -eq $true)
+    {
+        write-log -message "SIMULATION: Set-SumoState to value: $($State)"
+        Set-MqttTopic -Topic $MQTT.Topic_WZ_Sumo -Value $State -Retain | Out-Null
+        return $true
+    }
+
+
     #check if SUMO is reachable first.
     $PingSumo = Test-Connection -ComputerName $SumoController.SumoHost -Count 2 -ErrorAction SilentlyContinue
     if ($PingSumo.count -lt 2)
@@ -177,27 +195,13 @@ function Set-SumoState([int]$State)
 }
 
 
-function Send-Email ([String]$Type,[String]$Message,[String]$AttachChart='no',[String]$Priority='normal')
+function Send-Email ([String]$Type,[String]$Message,[String]$Priority='normal')
 {
     $MailSubject = ($Mail.Subject + $Type)
     $MailCred = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList $Mail.User,(ConvertTo-SecureString $Mail.Pass -AsPlainText -Force)
     try
     {
-        switch ($AttachChart)
-        {
-            no
-            {
-                Send-MailMessage -To $Mail.Dest -From $Mail.Source -Subject $MailSubject -Body ($Mail.Text + $Message) -Priority $Priority -SmtpServer $Mail.Srv -Port $Mail.Port -Encoding ([System.Text.Encoding]::UTF8) -Credential $MailCred
-            }
-            yes
-            {
-                Send-MailMessage -To $Mail.Dest -From $Mail.Source -Subject $MailSubject -Body ($Mail.Text + $Message) -Priority $Priority -Attachments $SumoController.ChartFile -SmtpServer $Mail.Srv -Port $Mail.Port -Encoding ([System.Text.Encoding]::UTF8) -Credential $MailCred
-            }
-            default
-            {
-                return $false
-            }
-        }
+        Send-MailMessage -To $Mail.Dest -From $Mail.Source -Subject $MailSubject -Body ($Mail.Text + $Message) -Priority $Priority -SmtpServer $Mail.Srv -Port $Mail.Port -Encoding ([System.Text.Encoding]::UTF8) -Credential $MailCred
     }
     catch
     {
@@ -240,86 +244,6 @@ Function SendTo-LogStash ([string]$JsonString)
     else
     {
         # No String parameter given
-        return $false
-    }
-    return $true
-}
-
-
-function CreateStatusHtml ([string] $OutFile)
-{
-    if (! $OutFile)
-    {
-        return $false
-    }
-    # Create dynamic content
-    # Backend Controller Script Status
-    if ($SumoController.State -eq "Running")
-    {
-        $StatusColor = 'green'
-    }
-    else
-    {
-        $StatusColor = 'red'
-    }
-    # SUMO Status
-    switch ($SumoController.SumoState)
-    {
-        0 { $SumoStatus = "<span style=`"color: red;`">OFF</span>" }
-        1 { $SumoStatus = "<span style=`"color: green;`">ON</span>" }
-        2 { $SumoStatus = "<span style=`"color: red;`">FAILURE</span>" }
-        default { $SumoStatus = "<span style=`"color: red;`">UNKNOWN</span>" }
-    }
-    # get last 60min of Temp-WZ.mik Sensordata
-    if (Test-Path $SumoController.WZCsv)
-    {
-        $SensData=(gc $SumoController.WZCsv)[0 .. -12] | ConvertFrom-Csv -Delimiter ";"
-    }
-
-    # get latest error Messages from PSLogfile
-    $PSLogData = @()
-    if (Test-Path $SumoController.PSLog)
-    {
-        $PSLogData = (Get-Content $SumoController.PSLog -Delimiter "`r`n" -Tail 14 -Encoding UTF8).Replace("`r`n","<br />`r`n")
-    }
-
-    # Convert SUMO Settings to HTML
-    $SumoConfig = [PSCustomObject]$SumoSettings | ConvertTo-Html -As List -Fragment
-
-    # Prepare HTML
-    $IndexTitle = 'Sumo-Controller WebStatus'
-    $IndexHeader = "<style type=`"text/css`">`nTABLE{border-width: 1px;border-style: solid;border-color: black;border-collapse: collapse;}`nTH{border-width: 1px;padding: 0px;border-style: solid;border-color: black;}`nTD{border-width: 1px;padding: 0px;border-style: solid;border-color: black;}`n</style>"
-    $IndexPreTable = "<h2>Sumo Controller Status</h2>`n"
-    $IndexPreTable += "<h4>Sumo Controller Backend State: <span style=`"color: $($StatusColor);`">$($SumoController.State)</span></h4>`n"
-    $IndexPreTable += "<h4>SUMO Oven Status: $($SumoStatus)</h4>`n"
-    if ($SumoController.State -eq 'Running')
-    {
-        $IndexPreTable += "<a href=`"/IndoorWZChart.png`"><img style=`"border: 2px solid ; width: 640px; height: 360px;`" alt=`"IndoorWZChart`" src=`"/IndoorWZChart.png`" /></a><br />`n"
-    }
-    $IndexPreTable += "<br /><h4>Most recent Temp-WZ sensor data:</h4>`n"
-    $IndexPostTable = "<br /><h4>Current SUMO Controller config:</h4>`n"
-    $IndexPostTable += $SumoConfig
-    $IndexPostTable += "<br /><a href=`"/config/`">Configure SUMO Controller settings</a>"
-    $IndexPostTable += "<br /><br /><h4>Most recent Log messages:</h4>`n"
-    $IndexPostTable += "<p><span style=`"font-family: Courier New,Courier,monospace;`">"
-    $IndexPostTable += $PSLogData
-    $IndexPostTable += "<br /><br /><small>Output generated on: $((Get-Date).ToString())</small></span></p>"
-
-    # Create HTML
-    try
-    {
-        if ($SensData)
-        {
-            $SensData | ConvertTo-Html -Head $IndexHeader -Title $IndexTitle -PreContent $IndexPreTable -PostContent $IndexPostTable | Out-File -Encoding utf8 -Force -FilePath $OutFile
-        }
-        else
-        {
-            Write-Output " " | ConvertTo-Html -Head $IndexHeader -Title $IndexTitle -PreContent $IndexPreTable -PostContent $IndexPostTable | Out-File -Encoding utf8 -Force -FilePath $OutFile
-        }
-    }
-    catch
-    {
-        # something went wrong
         return $false
     }
     return $true

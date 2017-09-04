@@ -6,7 +6,7 @@ write-output ((get-date).ToString() + ":: BackendWrapper: Starting..") | Out-Fil
 try
 {
     write-output ((get-date).ToString() + ":: BackendWrapper: Launching SUMO-Controller-MQTT.ps1..") | Out-File -append -filepath $PSLogFile
-    &  C:\scripts\SUMO-Controller\SUMO-Controller-MQTT.ps1
+    & C:\scripts\SUMO-Controller\SUMO-Controller-MQTT.ps1
 }
 catch
 {

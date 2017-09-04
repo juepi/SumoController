@@ -4,10 +4,8 @@
 # Use invariant Culture to avoid problems with comma seperator
 [System.Threading.Thread]::CurrentThread.CurrentCulture = [Globalization.CultureInfo]::InvariantCulture;
 
-if ($SumoController -eq $null)
-{
-    Import-Module $PSScriptRoot\configuration.ps1
-}
+# Load configuration
+Import-Module $PSScriptRoot\configuration.ps1 -ErrorAction Stop -Force
 
 # Local Script Variables
 # Hour of Day when to turn SUMO On and Off
@@ -19,7 +17,7 @@ $TimeTable.OffAtHour = @("11","18")
 ########## Functions #############
 # Load common Functions
 
-Import-Module ($SumoController.BaseDir + "\Common-functions.ps1") -ErrorAction Stop
+Import-Module ($SumoController.BaseDir + "\Common-functions.ps1") -ErrorAction Stop -Force
 
 
 
@@ -101,6 +99,4 @@ while (($SumoController.Request -eq 'Run') -and (WaitUntilFull5Minutes))
             }
         }
     }
-    # Write index.html for Frontend
-    CreateStatusHTML -OutFile $SumoController.StatHTML | Out-Null
 }

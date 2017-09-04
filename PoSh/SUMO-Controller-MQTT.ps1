@@ -1,28 +1,14 @@
 ################################# SUMO Controller script ##########################################
 ### Author: jpichlbauer
+### Attention: Script must be executed by Startup.ps1
 ###################################################################################################
 # Use invariant Culture to avoid problems with comma seperator
 [System.Threading.Thread]::CurrentThread.CurrentCulture = [Globalization.CultureInfo]::InvariantCulture;
 
-#region ############ Load configuration and functions #############################################
-# only necessary when run standalone, else config will be loaded by startup.ps1
-
-if ($SumoSettings -eq $null)
-{
-    Import-Module $PSScriptRoot\configuration.ps1 -ErrorAction Stop
-    # script called standalone, assume Foreground mode
-    $BackgroundMode = $false
-}
-else
-{
-    # configuration already loaded, assume background mode
-    $BackgroundMode = $true
-}
-
-# Load common and Data Visualization functions
+#region ############################## Load functions #############################################
 
 Import-Module $($SumoController.BaseDir + "\Common-functions.ps1") -ErrorAction Stop
-Import-Module $($SumoController.BaseDir + "\Data-Visualization.ps1") -ErrorAction Stop
+
 #endregion ========================================================================================
 
 
@@ -42,10 +28,10 @@ $LastWZRelHumValOK = Get-Date
 [Single]$WZRelHumLastPlausible = "50.0"
 $SumoSessionStart = Get-Date
 # Use script scope as variable will be modified in a function
-[int]$script:SumoStateChangeRequested = 0
+[int]$Script:SumoStateChangeRequested = 0
 
 
-# Create PSObject for CSV / Chart output
+# Create PSObject for CSV output
 $DataSet = New-Object PSObject
 $DataSet | Add-Member -MemberType NoteProperty -Name Datum  -Value ''
 $DataSet | Add-Member -MemberType NoteProperty -Name TempWZ -Value ([single]'0.0')
@@ -66,14 +52,12 @@ function Control-Sumo([Single]$Temp)
     if ((((get-date).DayOfWeek -match 'Saturday|Sunday') -or ($Holidays -match "$(Get-Date -UFormat $($HolidayDateUFormat))") -or $SumoSettings.ForceWeekend) -and (-not $SumoSettings.ForceWorkday))
     {
         #Weekend or Holiday
-        if (! $BackgroundMode) {Write-Host "Detected Weekend." -ForegroundColor Green}
         [int]$DayStartHour = $SumoSettings.WeekendDayStartHour
         [int]$DayEndHour = $SumoSettings.WeekendDayEndHour
     }
     else
     {
         #not Weekend
-        if (! $BackgroundMode) {Write-Host "Detected Workday." -ForegroundColor Green}
         [int]$DayStartHour = $SumoSettings.DayStartHour
         [int]$DayEndHour = $SumoSettings.DayEndHour
         
@@ -100,7 +84,7 @@ function Control-Sumo([Single]$Temp)
                 else
                 {
                     # Error, retry
-                    write-output ((get-date).ToString() + ":: Control-Sumo: Set-SumoState 1 failed, retrying..") | Out-File -append -filepath $SumoController.PSLog
+                    write-log -message "Control-Sumo: Set-SumoState 1 failed, retrying.."
                     Start-Sleep -Seconds 5
                     if ((Set-SumoState -State 1) -eq $true)
                     {
@@ -139,7 +123,7 @@ function Control-Sumo([Single]$Temp)
                 else
                 {
                     # Error, retry
-                    write-output ((get-date).ToString() + ":: Control-Sumo: Set-SumoState 0 failed, retrying..") | Out-File -append -filepath $SumoController.PSLog
+                    write-log -message "Control-Sumo: Set-SumoState 0 failed, retrying.."
                     Start-Sleep -Seconds 5
                     if ((Set-SumoState -State 0) -eq $true)
                     {
@@ -181,7 +165,7 @@ function Control-Sumo([Single]$Temp)
                 else
                 {
                     # Error, retry
-                    write-output ((get-date).ToString() + ":: Control-Sumo: Set-SumoState 1 failed, retrying..") | Out-File -append -filepath $SumoController.PSLog
+                    write-log -message "Control-Sumo: Set-SumoState 1 failed, retrying.."
                     Start-Sleep -Seconds 5
                     if ((Set-SumoState -State 1) -eq $true)
                     {
@@ -220,7 +204,7 @@ function Control-Sumo([Single]$Temp)
                 else
                 {
                     # Error, retry
-                    write-output ((get-date).ToString() + ":: Control-Sumo: Set-SumoState 0 failed, retrying..") | Out-File -append -filepath $SumoController.PSLog
+                    write-log -message "Control-Sumo: Set-SumoState 0 failed, retrying.."
                     Start-Sleep -Seconds 5
                     if ((Set-SumoState -State 0) -eq $true)
                     {
@@ -254,15 +238,7 @@ function write-log ([string]$message)
 #region ################ Main #####################################################################
 
 $SumoController.State = 'Running'
-
-if ($BackgroundMode)
-{
-    write-log -message "SUMO-Controller: SUMO-Controller-MQTT.ps1 script started in Frontend / Backend mode."
-}
-else
-{
-    write-log -message "SUMO-Controller: script started without Frontend."
-}
+write-log -message "SUMO-Controller: script started without Frontend."
 
 # Load Holidays from ICS Calendar
 if (Test-Path $SumoController.HolidaysICS)
@@ -278,18 +254,7 @@ else
 # Get historic data from log (if available)
 if (Test-Path $SumoController.WZCsv)
 {
-    if (! $BackgroundMode) {Write-Host "Importing historic data.." -ForegroundColor Green}
-
     $HistoricData = Import-Csv -Delimiter ";" -Encoding UTF8 -Path $SumoController.WZCsv
-
-    # Fill the queues with historic data
-    for ($i=$QueueSize; $i -gt 0; $i--)
-    {
-        $DatumQ.Enqueue($HistoricData.Datum[-$i])
-        $TempWZQ.Enqueue([single]$HistoricData.TempWZ[-$i])
-        $RhWZQ.Enqueue([int]$HistoricData.RelHumWZ[-$i])
-        $SumoStateQ.Enqueue([Int]$HistoricData.SumoState[-$i]*5+$ChartTempMin)
-    }
 
     #import most recent SumoSessionHours
     $DataSet.SumoSessionHours = [Single]($HistoricData[-1].SumoSessionHours)
@@ -313,13 +278,15 @@ $SumoController.SumoState = Get-SumoState
 while (($SumoController.Request -eq 'Run') -and (WaitUntilFull5Minutes))
 {
     # Verify if Sensor is online (Value published within last 30 minutes)
-    # CAUTION: this requires ElasticSearch-Logger script to be running or to update Sensor Status topic if a faul occurs!
-    if ((Get-MqttTopic -Topic $MQTT.Topic_WZ_Status) -notmatch $MQTT.StatusSensorDead)
+    # CAUTION: this requires ElasticSearch-Logger script to be running or to update Sensor Status topic if a fault occurs!
+    if ((Get-MqttTopic -Topic $MQTT.Topic_WZ_Status) -notmatch $MQTT.VAL_StatusSensorDead)
     {
         # Sensor online
         $DataSet.Datum = Get-Date -UFormat $GTFormat
-        try { [single]$WZTempC = (Get-MqttTopic -Topic $MQTT.Topic_WZ_Temp) } catch { [single]$WZTempC = 255; write-log -message ("Get-MqttTopic failed to fetch " + $MQTT.Topic_WZ_Temp + "; Exception: " + ($_.Exception.Message.ToString() -replace "`t|`n|`r"," ")) }
-        try { [Single]$WZRelHum = (Get-MqttTopic -Topic $MQTT.Topic_WZ_RH) } catch { [single]$WZRelHum = 255; write-log -message ("Get-MqttTopic failed to fetch " + $MQTT.Topic_WZ_RH + "; Exception: " + ($_.Exception.Message.ToString() -replace "`t|`n|`r"," ")) }
+        try { [single]$WZTempC = (Get-MqttTopic -Topic $MQTT.Topic_WZ_Temp) }
+        catch { [single]$WZTempC = 255; write-log -message ("Get-MqttTopic failed to fetch " + $MQTT.Topic_WZ_Temp + "; Exception: " + ($_.Exception.Message.ToString() -replace "`t|`n|`r"," ")) }
+        try { [Single]$WZRelHum = (Get-MqttTopic -Topic $MQTT.Topic_WZ_RH) }
+        catch { [single]$WZRelHum = 255; write-log -message ("Get-MqttTopic failed to fetch " + $MQTT.Topic_WZ_RH + "; Exception: " + ($_.Exception.Message.ToString() -replace "`t|`n|`r"," ")) }
 
         # Verify Sensor Values
         if (VerifySensorVal -Val $WZTempC -Min $SensorRange.WZTempMin -Max $SensorRange.WZTempMax)
@@ -348,7 +315,7 @@ while (($SumoController.Request -eq 'Run') -and (WaitUntilFull5Minutes))
                     Start-Sleep -Seconds 5
                     Set-SumoState -State 0 | Out-Null
                 }
-                Send-Email -Type ERROR -Message ("Temp-WZ nicht erreichbar, Temperatur Sensordaten ungültig!`nSumo wurde gestoppt, Get-SumoState meldet: " + (Get-SumoState) + "`nDie Programmausführung wurde beendet!") -AttachChart yes -Priority high | Out-Null
+                Send-Email -Type ERROR -Message ("Temp-WZ nicht erreichbar, Temperatur Sensordaten ungültig!`nSumo wurde gestoppt, Get-SumoState meldet: " + (Get-SumoState) + "`nDie Programmausführung wurde beendet!") -Priority high | Out-Null
                 write-log -message "Main: VerifySensorValues: Could not fetch valid Sensor data from MQTT Broker (Topic $($MQTT.Topic_WZ_Temp)) within $($SumoController.SensMaxAge) minutes! Sensor Data outdated, SUMO stopped! Get-SumoState=$(Get-SumoState)"
                 $SumoController.State = "Killed"
                 Write-Error "Could not fetch valid Sensor data from MQTT Broker (Topic $($MQTT.Topic_WZ_Temp)) within $($SumoController.SensMaxAge) minutes! Sensor Data outdated, SUMO stopped!" -ErrorAction Stop
@@ -392,7 +359,7 @@ while (($SumoController.Request -eq 'Run') -and (WaitUntilFull5Minutes))
             # Sumo was turned on, start new session
             $SumoSessionStart = Get-Date
             $DataSet.SumoSessionHours = 0
-            if ($SumoController.SendInfoMail) { Send-Email -Type INFO -Message ("Sumo gestartet.") -AttachChart $SumoController.AttachChart | Out-Null }
+            if ($SumoController.SendInfoMail) { Send-Email -Type INFO -Message ("Sumo gestartet.") | Out-Null }
         }
         elseif ( ($SumoOldState -eq $SumoController.SumoState) -and ($SumoController.SumoState -eq "1") )
         {
@@ -406,7 +373,7 @@ while (($SumoController.Request -eq 'Run') -and (WaitUntilFull5Minutes))
             $DataSet.SumoSessionHours = [Single]("{0:N2}" -f((get-date) - $SumoSessionStart).TotalHours)
             $DataSet.SumoOverallHours = [Single]("{0:N2}" -f($DataSet.SumoOverallHours + $DataSet.SumoSessionHours))
             $DataSet.SumoSessionHours = 0
-            if ($SumoController.SendInfoMail) { Send-Email -Type INFO -Message ("Sumo gestartet.") -AttachChart $SumoController.AttachChart | Out-Null }
+            if ($SumoController.SendInfoMail) { Send-Email -Type INFO -Message ("Sumo gestartet.") | Out-Null }
         }
         elseif ( ($SumoOldState -eq "0") -and ($SumoController.SumoState -eq "0") -and ($DataSet.SumoSessionHours -ne 0) )
         {
@@ -429,8 +396,6 @@ while (($SumoController.Request -eq 'Run') -and (WaitUntilFull5Minutes))
                     Send-Email -Type ERROR -Message ("Control-Sumo setzt Sumo Status 2, sumo-pj.mik nicht erreichbar, Programmausführung wird beendet!") -Priority high | Out-Null
                     write-log -message "Main: Control-Sumo reports status 2, sumo-pj.mik not reachable! Program will exit!"
                     $SumoController.State = "Killed"
-                    # Update HTML before killing program
-                    CreateStatusHtml -OutFile $SumoController.StatHTML | Out-Null
                     write-error "Main: Control-Sumo reports status 2, sumo-pj.mik not reachable! Program will exit!" -ErrorAction Stop
                 }
 
@@ -438,31 +403,10 @@ while (($SumoController.Request -eq 'Run') -and (WaitUntilFull5Minutes))
         }
 
         # DataSet successfully updated, save to CSV..
-        if (! $BackgroundMode) {$DataSet | ft -AutoSize}
-        # Append to CSV file..
         $DataSet | Export-Csv -Delimiter ";" -Encoding UTF8 -Append -NoTypeInformation -Path $SumoController.WZCsv
 
         # .. set SUMO status in MQTT topic..
         Set-MqttTopic -Topic $MQTT.Topic_WZ_Sumo -Value $DataSet.SumoState -Retain | Out-Null
-
-        #.. update Status HTML for IIS..
-        CreateStatusHtml -OutFile $SumoController.StatHTML | Out-Null
-
-        # .. enqueue Data for Charts..
-        if ($DatumQ.Count -ge $QueueSize) { $DatumQ.Dequeue() | Out-Null }
-        $DatumQ.Enqueue($DataSet.Datum)
-        if ($TempWZQ.Count -ge $QueueSize) { $TempWZQ.Dequeue() | Out-Null }
-        $TempWZQ.Enqueue($DataSet.TempWZ)
-        if ($RhWZQ.Count -ge $QueueSize) { $RhWZQ.Dequeue() | Out-Null }
-        $RhWZQ.Enqueue($DataSet.RelHumWZ)
-        if ($SumoStateQ.Count -ge $QueueSize) { $SumoStateQ.Dequeue() | Out-Null }
-        $SumoStateQ.Enqueue($DataSet.SumoState*5 + $ChartTempMin)
-
-        # .. and Update our chart.
-        $chart.Series["Temperatur"].Points.DataBindXY($DatumQ, $TempWZQ)
-        $chart.Series["SUMO Status"].Points.DataBindXY($DatumQ, $SumoStateQ)
-        $chart.Series["RH"].Points.DataBindXY($DatumQ, $RhWZQ)
-        $Chart.SaveImage($SumoController.ChartFile, $SumoController.ChartFormat)
     }
     else
     {
@@ -470,15 +414,13 @@ while (($SumoController.Request -eq 'Run') -and (WaitUntilFull5Minutes))
         if ((Set-SumoState -State 0) -eq $false)
         {
             # Error, retry
-            write-output ((get-date).ToString() + ":: Main: Sensor status dead! Set-SumoState 0 failed, retrying..") | Out-File -append -filepath $SumoController.PSLog
+            write-log -message "Main: Sensor status dead! Set-SumoState 0 failed, retrying.."
             Start-Sleep -Seconds 5
             Set-SumoState -State 0 | Out-Null
         }
-        Send-Email -Type ERROR -Message ("Temp-WZ Sensor nicht erreichbar, Sensordaten ungültig!`nSumo wurde gestoppt, Get-SumoState meldet: " + (Get-SumoState) + "`nDie Programmausführung wurde beendet!") -AttachChart yes -Priority high | Out-Null
+        Send-Email -Type ERROR -Message ("Temp-WZ Sensor nicht erreichbar, Sensordaten ungültig!`nSumo wurde gestoppt, Get-SumoState meldet: " + (Get-SumoState) + "`nDie Programmausführung wurde beendet!") -Priority high | Out-Null
         write-log -message "Main: Temp-WZ Sensor Status dead, SUMO stopped! Get-SumoState=$(Get-SumoState)"
         $SumoController.State = "Killed"
-        # Update HTML before killing program
-        CreateStatusHtml -OutFile $SumoController.StatHTML | Out-Null
         Write-Error "Main: Temp-WZ Sensor Status dead, SUMO stopped!" -ErrorAction Stop
     }
 }
