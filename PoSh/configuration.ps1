@@ -10,6 +10,11 @@ $SumoSettings = [HashTable]::Synchronized(@{})
 # Force Weekend or Workday (forced Workday overrules forced weekend)
 $SumoSettings.ForceWeekend = [bool]$false
 $SumoSettings.ForceWorkday = [bool]$false
+# If true, write additional debug info into debug log on every controller loop (5min)
+$SumoSettings.Debug = [bool]$false
+# If true, only turn on SUMO manually (i.e. by setting MQTT Topic $MQTT.T_FHEM_SumoState to "on")
+# NOTE: SUMO will still turn off automatically according to max day/night temperatures!
+$SumoSettings.ManualMode = [bool]$false
 
 # Temperature Thresholds
 $SumoSettings.DayStartHour = [Int]'15'
@@ -29,16 +34,17 @@ $SumoController.Request = 'Run'
 $SumoController.SumoState = [int]'0'
 $SumoController.BaseDir = $PSScriptRoot
 $SumoController.PSLog = "$($SumoController.BaseDir)\logs\SUMO-Controller.log"
+$SumoController.DebugLog = "$($SumoController.BaseDir)\logs\SUMO-Controller-debug.log"
 $SumoController.WZCsv = "$($SumoController.BaseDir)\data\TempWZ-Sumo.csv"
 $SumoController.HolidaysICS = "$($SumoController.BaseDir)\data\Feiertage-AT.ics"
-$SumoController.SumoHost = "sumo.domain.tld"
+$SumoController.SumoHost = "sumo.domain.com"
 $SumoController.SumoURL = ("http://" + $SumoController.SumoHost)
 $SumoController.SumoON = ($SumoController.SumoURL + "/SUMO=ON")
 $SumoController.SumoOFF = ($SumoController.SumoURL + "/SUMO=OFF")
 $SumoController.SumoResponseOn = "SUMO state is now: On"
 $SumoController.SumoResponseOff = "SUMO state is now: Off"
 # ATTENTION: Simulate must be set to $false to actually set SUMO actions!
-$SumoController.Simulate = $false
+$SumoController.Simulate = [bool]$false
 # Timeout Value for Invoke-Webrequest calls (seconds)
 $SumoController.WebReqTimeout = [int]'15'
 # Minimum Runtime for SUMO in Hours
@@ -48,20 +54,22 @@ $SumoController.SensMaxAge = [int]'30'
 #Ignore SUMO state change requests for X times (i.e. while venting room)
 # Note: Main lop runs every 5 minutes, so state change will be ignored fox X * 5min
 $SumoController.IgnoreStateChangeReq = [int]'2'
+# Do not change the StateChangeRequested var, will be handled by controller!
+$SumoController.StateChangeRequested = [int]'0'
 #Send Info Mails on oven status change
 $SumoController.SendInfoMail = $false
 
 
 #region Mail Settings
 $Mail = [HashTable]::Synchronized(@{})
-$Mail.Source="sender@domain.tld"
-$Mail.Dest="recipient@domain.tld"
+$Mail.Source="sender@domain.at"
+$Mail.Dest="recipient@domain.com"
 $Mail.Subject="Sumo-Controller "
 $Mail.Text="SUMO Controller meldet:`n`n"
-$Mail.Srv="smtp.server.tld"
+$Mail.Srv="smtp.server.com"
 $Mail.Port="25"
-$Mail.User="mailuser"
-$Mail.Pass = "mailpass"
+$Mail.User="smtpuser"
+$Mail.Pass = "smtppass"
 #endregion
 
 
@@ -69,8 +77,10 @@ $Mail.Pass = "mailpass"
 $MQTT = [HashTable]::Synchronized(@{})
 $MQTT.MosqSub = "$($env:MOSQUITTO_DIR)\mosquitto_sub.exe"
 $MQTT.MosqPub = "$($env:MOSQUITTO_DIR)\mosquitto_pub.exe"
-$MQTT.Broker = 'broker.hostname.tld'
+$MQTT.Broker = 'localhost'
 $MQTT.Port = [int]'1883'
+$MQTT.GetRetries = [int]'2'
+$MQTT.GetTimeout = [int]'500'
 $MQTT.ClientID = 'SumoController'
 $MQTT.Topic_Test = 'HB7/SumoController/Test'
 $MQTT.Topic_WZ_Temp = 'HB7/Indoor/WZ/Temp'
@@ -90,6 +100,8 @@ $MQTT.T_FHEM_DayStartHour = 'HB7/fhem/Sumo/DayStartHour'
 $MQTT.T_FHEM_DayEndHour = 'HB7/fhem/Sumo/DayEndHour'
 $MQTT.T_FHEM_WeekendDayStartHour = 'HB7/fhem/Sumo/WeDayStartHour'
 $MQTT.T_FHEM_WeekendDayEndHour = 'HB7/fhem/Sumo/WeDayEndHour'
+$MQTT.T_FHEM_Debug = 'HB7/fhem/Sumo/EnableDebugLog'
+$MQTT.T_FHEM_ManualMode = 'HB7/fhem/Sumo/ManualMode'
 #endregion
 
 
@@ -110,4 +122,4 @@ $Startup.MinTemp = [single]'15'
 $Startup.MaxTemp = [single]'26'
 $Startup.HourValues = @('DayStartHour','DayEndHour','WeekendDayStartHour','WeekendDayEndHour')
 $Startup.TempValues = @('MinNightTemp','MaxNightTemp','MinDayTemp','MaxDayTemp')
-$Startup.BoolValues = @('ForceWorkday','ForceWeekend')
+$Startup.BoolValues = @('ForceWorkday','ForceWeekend','Debug','ManualMode')

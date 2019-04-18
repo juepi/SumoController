@@ -124,14 +124,14 @@ while ($Handle.IsCompleted -eq $false)
             # convert string to bool
             switch ($CurrentValue)
             {
-                on { $CurrentValue = [bool]$true }
-                off { $CurrentValue = [bool]$false }
+                on { $CurrentbValue = [bool]$true }
+                off { $CurrentbValue = [bool]$false }
             }
             # set new value
-            if ($SumoSettings.$BoolVal -ne $CurrentValue)
+            if ($SumoSettings.$BoolVal -ne $CurrentbValue)
             {
-                $SumoSettings.$BoolVal = $CurrentValue
-                write-log -message "Flag $($BoolVal) set to $($CurrentValue)."
+                $SumoSettings.$BoolVal = $CurrentbValue
+                write-log -message "Flag $($BoolVal) set to $($CurrentbValue)."
             }
         }
         else
@@ -173,6 +173,7 @@ while ($Handle.IsCompleted -eq $false)
             if ((Set-SumoState -State $MqttSumoState) -eq $true)
             {
                 write-log -message "New SUMO state set due to FHEM request. New state: $($MqttSumoState)"
+                $SumoController.StateChangeRequested = 0
             }
             else
             {
@@ -182,6 +183,7 @@ while ($Handle.IsCompleted -eq $false)
                 if ((Set-SumoState -State $MqttSumoState) -eq $true)
                 {
                     write-log -message "New SUMO state set due to FHEM request. New state: $($MqttSumoState)"
+                    $SumoController.StateChangeRequested = 0
                 }
                 else
                 {

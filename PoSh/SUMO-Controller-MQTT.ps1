@@ -27,8 +27,6 @@ $LastWZRelHumValOK = Get-Date
 [Single]$WZTempLastPlausible = "22.0"
 [Single]$WZRelHumLastPlausible = "50.0"
 $SumoSessionStart = Get-Date
-# Use script scope as variable will be modified in a function
-[int]$Script:SumoStateChangeRequested = 0
 
 
 # Create PSObject for CSV output
@@ -49,36 +47,49 @@ $DataSet | Add-Member -MemberType NoteProperty -Name SumoOverallHours -Value ([S
 function Control-Sumo([Single]$Temp)
 {
     # Check if Weekend or Holiday
-    if ((((get-date).DayOfWeek -match 'Saturday|Sunday') -or ($Holidays -match "$(Get-Date -UFormat $($HolidayDateUFormat))") -or $SumoSettings.ForceWeekend) -and (-not $SumoSettings.ForceWorkday))
+    $IsWeekendday=[bool]((get-date).DayOfWeek -match 'Friday|Saturday|Sunday')
+    $IsHoliday=[bool]($Holidays -match "$(Get-Date -UFormat $($HolidayDateUFormat))")
+    if ($SumoSettings.Debug) { write-log -message "Control-Sumo:: Day/Night criterias: IsWeekendday=$($IsWeekendday) | IsHoliday=$($IsHoliday) | ForceWeekend=$($SumoSettings.ForceWeekend) | NOT ForceWorkday=$(-not $SumoSettings.ForceWorkday)" -Logfile $SumoController.DebugLog }
+
+    if (($IsWeekendday -or $IsHoliday -or $SumoSettings.ForceWeekend) -and (-not $SumoSettings.ForceWorkday))
     {
-        #Weekend or Holiday
+        if ($SumoSettings.Debug) { write-log -message "Control-Sumo:: Weekend or holiday" -Logfile $SumoController.DebugLog }
         [int]$DayStartHour = $SumoSettings.WeekendDayStartHour
         [int]$DayEndHour = $SumoSettings.WeekendDayEndHour
     }
     else
     {
-        #not Weekend
+        if ($SumoSettings.Debug) { write-log -message "Control-Sumo:: Workday" -Logfile $SumoController.DebugLog }
         [int]$DayStartHour = $SumoSettings.DayStartHour
         [int]$DayEndHour = $SumoSettings.DayEndHour
         
     }
     if (((Get-Date).Hour -ge $DayStartHour) -and ((Get-Date).Hour -le $DayEndHour))
     {
-        #Write-Host "Day"
+        # Day
+        if ($SumoSettings.Debug) { write-log -message "Control-Sumo:: Day time" -Logfile $SumoController.DebugLog }
         if ( ($Temp -lt $SumoSettings.MinDayTemp) -and ($SumoController.SumoState -eq "0"))
         {
-            # SUMO must be turned ON
-            if ( $script:SumoStateChangeRequested -ne $SumoController.IgnoreStateChangeReq )
+            if ($SumoSettings.ManualMode)
+            {
+                if ($SumoSettings.Debug) { write-log -message "Control-Sumo:: ManualMode enabled, not starting SUMO." -Logfile $SumoController.DebugLog }
+                return 0
+            }
+
+            if ($SumoSettings.Debug) { write-log -message "Control-Sumo:: SUMO must be turned on" -Logfile $SumoController.DebugLog }
+            if ( $SumoController.StateChangeRequested -ne $SumoController.IgnoreStateChangeReq )
             {
                 # Ignore State Change request and return current state
-                $script:SumoStateChangeRequested ++
+                $SumoController.StateChangeRequested ++
+                if ($SumoSettings.Debug) { write-log -message "Control-Sumo:: StateChangeRequested increased to $($SumoController.StateChangeRequested)" -Logfile $SumoController.DebugLog }
                 return Get-SumoState
             }
             else
             {
+                if ($SumoSettings.Debug) { write-log -message "Control-Sumo:: Turning on SUMO" -Logfile $SumoController.DebugLog }
                 if ((Set-SumoState -State 1) -eq $true)
                 {
-                    $script:SumoStateChangeRequested = 0
+                    $SumoController.StateChangeRequested = 0
                     return 1
                 }
                 else
@@ -88,7 +99,7 @@ function Control-Sumo([Single]$Temp)
                     Start-Sleep -Seconds 5
                     if ((Set-SumoState -State 1) -eq $true)
                     {
-                        $script:SumoStateChangeRequested = 0
+                        $SumoController.StateChangeRequested = 0
                         return 1
                     }
                     else
@@ -100,11 +111,12 @@ function Control-Sumo([Single]$Temp)
         }
         elseif ( ($Temp -ge $SumoSettings.MaxDayTemp) -and ($SumoController.SumoState -eq "1"))
         {
-            # SUMO must be turned OFF
-            if ( $script:SumoStateChangeRequested -ne $SumoController.IgnoreStateChangeReq )
+            if ($SumoSettings.Debug) { write-log -message "Control-Sumo:: SUMO must be turned off." -Logfile $SumoController.DebugLog }
+            if ( $SumoController.StateChangeRequested -ne $SumoController.IgnoreStateChangeReq )
             {
                 # Ignore State Change request and return current state
-                $script:SumoStateChangeRequested ++
+                $SumoController.StateChangeRequested ++
+                if ($SumoSettings.Debug) { write-log -message "Control-Sumo:: StateChangeRequested increased to $($SumoController.StateChangeRequested)" -Logfile $SumoController.DebugLog }
                 return Get-SumoState
             }
             else
@@ -112,12 +124,13 @@ function Control-Sumo([Single]$Temp)
                 # Verify that SUMO has run longer than minimum runtime
                 if ($DataSet.SumoSessionHours -lt $SumoController.MinRuntime)
                 {
-                    # Session shorter than MinRuntime, do not turn off yet
+                    if ($SumoSettings.Debug) { write-log -message "Control-Sumo:: Session shorter than MinRuntime, do not turn off yet." -Logfile $SumoController.DebugLog }
                     return 1
                 }
+                if ($SumoSettings.Debug) { write-log -message "Control-Sumo:: Turning off SUMO" -Logfile $SumoController.DebugLog }
                 if ((Set-SumoState -State 0) -eq $true)
                 {
-                    $script:SumoStateChangeRequested = 0
+                    $SumoController.StateChangeRequested = 0
                     return 0
                 }
                 else
@@ -127,7 +140,7 @@ function Control-Sumo([Single]$Temp)
                     Start-Sleep -Seconds 5
                     if ((Set-SumoState -State 0) -eq $true)
                     {
-                        $script:SumoStateChangeRequested = 0
+                        $SumoController.StateChangeRequested = 0
                         return 0
                     }
                     else
@@ -140,26 +153,36 @@ function Control-Sumo([Single]$Temp)
         else
         {
             # Temperature within range, no change needed, return current SUMO Status
+            if ($SumoSettings.Debug) { write-log -message "Control-Sumo:: Temperature within range, no change needed." -Logfile $SumoController.DebugLog }
             return Get-SumoState
         }
     }
     else
     {
-        #Write-Host "Night"
+        # Night
+        if ($SumoSettings.Debug) { write-log -message "Control-Sumo:: Night time" -Logfile $SumoController.DebugLog }
         if ( ($Temp -lt $SumoSettings.MinNightTemp) -and ($SumoController.SumoState -eq "0"))
         {
-            # SUMO must be turned ON
-            if ( $script:SumoStateChangeRequested -ne $SumoController.IgnoreStateChangeReq )
+            if ($SumoSettings.ManualMode)
+            {
+                if ($SumoSettings.Debug) { write-log -message "Control-Sumo:: ManualMode enabled, not starting SUMO." -Logfile $SumoController.DebugLog }
+                return 0
+            }
+
+            if ($SumoSettings.Debug) { write-log -message "Control-Sumo:: SUMO needs to be turned on" -Logfile $SumoController.DebugLog }
+            if ( $SumoController.StateChangeRequested -ne $SumoController.IgnoreStateChangeReq )
             {
                 # Ignore State Change request and return current state
-                $script:SumoStateChangeRequested ++
+                $SumoController.StateChangeRequested ++
+                if ($SumoSettings.Debug) { write-log -message "Control-Sumo:: StateChangeRequested increased to $($SumoController.StateChangeRequested)" -Logfile $SumoController.DebugLog }
                 return Get-SumoState
             }
             else
             {
+                if ($SumoSettings.Debug) { write-log -message "Control-Sumo:: Turning on SUMO" -Logfile $SumoController.DebugLog }
                 if ((Set-SumoState -State 1) -eq $true)
                 {
-                    $script:SumoStateChangeRequested = 0
+                    $SumoController.StateChangeRequested = 0
                     return 1
                 }
                 else
@@ -169,7 +192,7 @@ function Control-Sumo([Single]$Temp)
                     Start-Sleep -Seconds 5
                     if ((Set-SumoState -State 1) -eq $true)
                     {
-                        $script:SumoStateChangeRequested = 0
+                        $SumoController.StateChangeRequested = 0
                         return 1
                     }
                     else
@@ -182,10 +205,12 @@ function Control-Sumo([Single]$Temp)
         elseif ( ($Temp -ge $SumoSettings.MaxNightTemp) -and ($SumoController.SumoState -eq "1"))
         {
             # SUMO must be turned OFF
-            if ( $script:SumoStateChangeRequested -ne $SumoController.IgnoreStateChangeReq )
+            if ($SumoSettings.Debug) { write-log -message "Control-Sumo:: SUMO must be turned off" -Logfile $SumoController.DebugLog }
+            if ( $SumoController.StateChangeRequested -ne $SumoController.IgnoreStateChangeReq )
             {
                 # Ignore State Change request and return current state
-                $script:SumoStateChangeRequested ++
+                $SumoController.StateChangeRequested ++
+                if ($SumoSettings.Debug) { write-log -message "Control-Sumo:: StateChangeRequested increased to $($SumoController.StateChangeRequested)" -Logfile $SumoController.DebugLog }
                 return Get-SumoState
             }
             else
@@ -194,11 +219,13 @@ function Control-Sumo([Single]$Temp)
                 if ($DataSet.SumoSessionHours -lt $SumoController.MinRuntime)
                 {
                     # Session shorter than MinRuntime, do not turn off yet
+                    if ($SumoSettings.Debug) { write-log -message "Control-Sumo:: Session shorter than MinRuntime, do not turn off yet" -Logfile $SumoController.DebugLog }
                     return 1
                 }
+                if ($SumoSettings.Debug) { write-log -message "Control-Sumo:: Turning off SUMO" -Logfile $SumoController.DebugLog }
                 if ((Set-SumoState -State 0) -eq $true)
                 {
-                    $script:SumoStateChangeRequested = 0
+                    $SumoController.StateChangeRequested = 0
                     return 0
                 }
                 else
@@ -208,7 +235,7 @@ function Control-Sumo([Single]$Temp)
                     Start-Sleep -Seconds 5
                     if ((Set-SumoState -State 0) -eq $true)
                     {
-                        $script:SumoStateChangeRequested = 0
+                        $SumoController.StateChangeRequested = 0
                         return 0
                     }
                     else
@@ -221,14 +248,19 @@ function Control-Sumo([Single]$Temp)
         else
         {
             # Temperature within valid range, no change needed, return current SUMO Status
+            if ($SumoSettings.Debug) { write-log -message "Control-Sumo:: Temperature within valid range, no change needed" -Logfile $SumoController.DebugLog }
             return Get-SumoState
         }
     }
 }
 
-function write-log ([string]$message)
+function write-log ([string]$message,[string]$Logfile)
 {
-    write-output ((get-date).ToString() + ":: " + $message) | Out-File -append -filepath $SumoController.PSLog
+    if (!$Logfile)
+    {
+        $Logfile = $SumoController.PSLog
+    }
+    write-output ((get-date).ToString() + ":: " + $message) | Out-File -append -filepath $Logfile
 }
 
 #endregion ========================================================================================
@@ -238,7 +270,7 @@ function write-log ([string]$message)
 #region ################ Main #####################################################################
 
 $SumoController.State = 'Running'
-write-log -message "SUMO-Controller: script started without Frontend."
+write-log -message "SUMO-Controller-MQTT: script started."
 
 # Load Holidays from ICS Calendar
 if (Test-Path $SumoController.HolidaysICS)
@@ -407,6 +439,16 @@ while (($SumoController.Request -eq 'Run') -and (WaitUntilFull5Minutes))
 
         # .. set SUMO status in MQTT topic..
         Set-MqttTopic -Topic $MQTT.Topic_WZ_Sumo -Value $DataSet.SumoState -Retain | Out-Null
+
+        # write debug log if requested
+        if ($SumoSettings.Debug -eq $true)
+        {
+            if ((Write-DebugLog -Logfile $SumoController.DebugLog) -ne $true)
+            {
+                write-log -message "Main: Failed to write debug output to $SumoController.DebugLog !"
+            }
+        }
+                
     }
     else
     {

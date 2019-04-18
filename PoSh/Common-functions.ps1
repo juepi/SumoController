@@ -23,7 +23,7 @@ function Get-MqttTopic ([String]$Topic)
     $pinfo.RedirectStandardError = $true
     $pinfo.RedirectStandardOutput = $true
     $pinfo.UseShellExecute = $false
-    $pinfo.Arguments = ("-h $($MQTT.Broker) -p $($MQTT.Port) -i $($MQTT.ClientID) -t $($MQTT.Topic_Test) -m ok -r")
+    $pinfo.Arguments = ("-h $($MQTT.Broker) -p $($MQTT.Port) -i $($MQTT.ClientID) -t $($MQTT.Topic_Test) -m ok")
     $pubproc = New-Object System.Diagnostics.Process
     $pubproc.StartInfo = $pinfo
     # Make sure broker is reachable by publishing to test topic
@@ -34,20 +34,36 @@ function Get-MqttTopic ([String]$Topic)
         # Broker not reachable
         return "ErrNoBroker"
     }
-    # Subscribe to MQTT Topic and get most recent (retained) value
-    $pinfo.FileName = $MQTT.MosqSub
-    $pinfo.Arguments = ("-h $($MQTT.Broker) -p $($MQTT.Port) -i $($MQTT.ClientID) -t $($Topic) -C 1")
-    $subproc = New-Object System.Diagnostics.Process
-    $subproc.StartInfo = $pinfo
-    $subproc.Start() | Out-Null
-    # wait 1 sec for a result
-    if ( ! $subproc.WaitForExit(1000) ) 
+    # Subscribe to MQTT Topic and get most recent (retained) value try $MQTT.GetRetries times
+    [bool]$ErrNoVal = $false
+    For ($i=1; $i -le $MQTT.GetRetries; $i++)
     {
-        # topic / value probably doesn't exit
-        try { $subproc.kill() } catch {}
-        return "nan"
+        $pinfo.FileName = $MQTT.MosqSub
+        $pinfo.Arguments = ("-h $($MQTT.Broker) -p $($MQTT.Port) -i $($MQTT.ClientID) -t $($Topic) -C 1")
+        $subproc = New-Object System.Diagnostics.Process
+        $subproc.StartInfo = $pinfo
+        $subproc.Start() | Out-Null
+        # wait for a result
+        if ( ! $subproc.WaitForExit($MQTT.GetTimeout) ) 
+        {
+            # topic / value probably doesn't exit
+            try { $subproc.kill() } catch {}
+            $ErrNoVal = $true
+        }
+        else
+        {
+            $ErrNoVal = $false
+            break
+        }
     }
-    return ($subproc.StandardOutput.ReadToEnd()).Trim()
+    if ($ErrNoVal)
+    {
+        return 'nan'
+    }
+    else
+    {
+        return ($subproc.StandardOutput.ReadToEnd()).Trim()
+    }
 }
 
 
@@ -58,7 +74,7 @@ function Set-MqttTopic ([String]$Topic,[String]$Value,[switch]$Retain)
     $pinfo.RedirectStandardError = $true
     $pinfo.RedirectStandardOutput = $true
     $pinfo.UseShellExecute = $false
-    $pinfo.Arguments = ("-h $($MQTT.Broker) -p $($MQTT.Port) -i $($MQTT.ClientID) -t $($MQTT.Topic_Test) -m ok -r")
+    $pinfo.Arguments = ("-h $($MQTT.Broker) -p $($MQTT.Port) -i $($MQTT.ClientID) -t $($MQTT.Topic_Test) -m ok")
     $pubproc = New-Object System.Diagnostics.Process
     $pubproc.StartInfo = $pinfo
     # Make sure broker is reachable by publishing to test topic
@@ -244,6 +260,33 @@ Function SendTo-LogStash ([string]$JsonString)
     else
     {
         # No String parameter given
+        return $false
+    }
+    return $true
+}
+
+Function Write-DebugLog ([string]$Logfile)
+{
+    if ($Logfile)
+    {
+        try
+        {
+            # Write current configurations to logfile:
+            write-output ((get-date).ToString() + ":: DEBUG:: Current SumoController Hashtable:") | Out-File -append -filepath $Logfile
+            $SumoController.GetEnumerator() | Format-Table | Out-File -append -filepath $Logfile
+            write-output ((get-date).ToString() + ":: DEBUG:: Current SumoSettings Hashtable:") | Out-File -append -filepath $Logfile
+            $SumoSettings.GetEnumerator() | Format-Table | Out-File -append -filepath $Logfile
+            #write-output ((get-date).ToString() + ":: DEBUG:: Sumo Controller Helper variables:") | Out-File -append -filepath $Logfile
+            #Write-Output ("StateChangeRequested: " + $script:SumoStateChangeRequested) | Out-File -append -filepath $Logfile
+        }
+        catch
+        {
+            return $false
+        }
+    }
+    else
+    {
+        # No logfile parameter given
         return $false
     }
     return $true
